@@ -1,0 +1,13 @@
+# evidence-cmd: python3 -c "import ast;p='plugins/foundry/mcp-server/src/foundry_mcp/tools/';L=lambda f:ast.parse(open(p+f,encoding='utf-8').read());A,E,T=L('artifacts.py'),L('evidence.py'),L('orchestration/teams.py');K=lambda n:isinstance(n.value,ast.Dict) and any(isinstance(c,ast.Constant) and c.value=='next_call' for c in n.value.keys);IMP=lambda m:any(isinstance(n,ast.ImportFrom) and n.module=='foundry_mcp.tools.artifacts' and any(a.name=='LEAD_NEXT_CALL' for a in n.names) for n in ast.walk(m));DEF=[a.value.value for a in A.body if isinstance(a,ast.Assign) and getattr(a.targets[0],'id','')=='LEAD_NEXT_CALL'];F=[n for n in E.body if getattr(n,'name','')=='foundry_accept_casting'][0];R=[n for n in ast.walk(F) if isinstance(n,ast.Return)];G=[n for n in T.body if getattr(n,'name','')=='foundry_unregister_team'][0];S=[n for n in ast.walk(G) if isinstance(n,ast.Return) and K(n)];print('accept_casting: return paths        =',len(R));print('accept_casting: carrying next_call  =',sum(1 for n in R if K(n)));print('accept_casting: MISSING next_call   =',sum(1 for n in R if not K(n)));print('team_down: returns with next_call   =',len(S));print('team_down: success payload keys     =',sorted(c.value for c in S[0].value.keys));print('leaf artifacts.py defines it        =',len(DEF)==1,repr(DEF[0]));print('evidence.py imports from the leaf   =',IMP(E));TD=[a.value for a in T.body if isinstance(a,ast.Assign) and getattr(a.targets[0],'id','')=='TEAM_DOWN_NEXT_CALL'];print('teams.py imports from the leaf      =',IMP(T));print('teams.py defines TEAM_DOWN_NEXT_CALL=',len(TD)==1);print('team_down success next_call names   =',[v.id for n in S for k,v in zip(n.value.keys,n.value.values) if isinstance(k,ast.Constant) and k.value=='next_call' and isinstance(v,ast.Name)])"
+# evidence-for: US-001, US-003, FR-003, FR-004, FR-011, NFR-002, GI-003, GI-005, CT-004, CT-005, ST-004, OT-005, OT-006
+
+accept_casting: return paths        = 12
+accept_casting: carrying next_call  = 12
+accept_casting: MISSING next_call   = 0
+team_down: returns with next_call   = 1
+team_down: success payload keys     = ['next_call', 'ok', 'remaining_teams', 'tmux_panes_killed', 'unregistered', 'verified_clean']
+leaf artifacts.py defines it        = True 'Call Foundry-Next now.'
+evidence.py imports from the leaf   = True
+teams.py imports from the leaf      = False
+teams.py defines TEAM_DOWN_NEXT_CALL= True
+team_down success next_call names   = ['TEAM_DOWN_NEXT_CALL']

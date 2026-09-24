@@ -98,6 +98,7 @@ from foundry_mcp.schemas.vocab import REQUIREMENT_ID_RE
 # there. See the banner above the door at the foot of this file.
 from foundry_mcp.tools.artifacts import (
     _hash_str,
+    LEAD_NEXT_CALL,
     check_reported_prompt_hash,
     declared_requirement_ids,
     foundry_spec_hash,
@@ -818,6 +819,37 @@ _DIGIT_RUN_RE: re.Pattern[str] = re.compile(r"\d+")
 #: not a field, it is two different strings.
 _KNOWN_VARIATION_SITES: frozenset[str] = frozenset({"digits", "text"})  # 2 sites
 
+#: lead-stalls OT-010 (D-006) — THE TWO KINDS OF THING THAT MAY KEEP A GRAMMAR
+#: ALIVE, AND WHY NEITHER OF THEM IS THE RUN CORPUS.
+#:
+#: There used to be a third member, ``corpus``: a log under ``evidence/`` at the
+#: repository root. It was removed because it could not do the job. ``evidence/``
+#: is a PER-RUN artifact — foundry's own F6 DONE step ends every run with
+#: ``git rm -r evidence/`` — so a shipped registry entry pointed at a run log is
+#: pointed at something the protocol is guaranteed to delete before the next run
+#: reads it. That is not a risk, it is a schedule: at ce5b416 the strip took all
+#: 78 logs, and five entries here went on naming ``casting-5-both-doors.log``,
+#: ``casting-5-platform-witness.log`` and ``casting-5-corpus-witness.log`` into a
+#: tree that had held none of them since. D-051 had already recorded four
+#: entries rotting in exactly this way one run earlier, and the remedy it chose
+#: — repoint at a log the tree carries TODAY — bought one run and then rotted
+#: again, because the pointer was never the broken part. The LIFETIME was.
+#:
+#: So both surviving kinds are artifacts this registry ships WITH: a fixture log
+#: under ``tests/fixtures/evidence/``, which the suite carries and the strip does
+#: not touch, and the ``# evidence-volatile:`` example ``agents/teammate.md``
+#: documents to authors. Nothing about the sweep's mechanism is relaxed by the
+#: move — a witness is still RESOLVED BY NAME and the shape is still re-derived
+#: from that log's own declarations, so a repointed or edited witness still turns
+#: the sweep red. Only the artifact's lifetime changed, from the run's to the
+#: registry's.
+#:
+#: Closed and total over the registry, exactly as ``_KNOWN_VARIATION_SITES`` is:
+#: ``test_every_grammar_declares_a_known_witness_kind`` walks the registry and
+#: fails on any other value, and ``_grammar_witness_sweep``'s trailing ``else``
+#: REPORTS an unrecognised one rather than treating the entry as witnessed.
+_KNOWN_WITNESS_KINDS: frozenset[str] = frozenset({"fixture", "protocol"})  # 2 kinds
+
 
 @dataclass(frozen=True)
 class _EnvironmentalGrammar:
@@ -839,11 +871,12 @@ class _EnvironmentalGrammar:
     says whether it is where the run happened or what the command reported, so
     every path grammar is keyed.
 
-    ``witness_kind`` / ``witness`` record what keeps this entry alive:
-    ``corpus`` names a committed evidence log whose own declared pattern erases
-    a token of this shape, under this key, from its own body; ``protocol``
-    names the literal ``# evidence-volatile:`` example ``agents/teammate.md``
-    ships.
+    ``witness_kind`` / ``witness`` record what keeps this entry alive, and both
+    members of the pair are SHIPPED artifacts with this registry's own lifetime
+    (see ``_KNOWN_WITNESS_KINDS``): ``fixture`` names a log under
+    ``tests/fixtures/evidence/`` whose own declared pattern erases a token of
+    this shape, under this key, from its own body; ``protocol`` names the
+    literal ``# evidence-volatile:`` example ``agents/teammate.md`` ships.
 
     ``witness_pair`` is ``(key_context, side_a, side_b)`` — a REAL disagreement
     this grammar must ADMIT, taken from the cold corpus run rather than
@@ -876,17 +909,16 @@ class _EnvironmentalGrammar:
 #: but which no committed log varies and no teammate.md example declares.
 #: Adding one means adding its witness, which is the point.
 #:
-#: D-051: ``witness`` is checked BY NAME. The corpus rung used to ask only
-#: whether SOME committed log erased a token of the shape, so it never read
-#: the name beside it, and four entries went on citing `casting-1-pytest.log`,
+#: D-051: ``witness`` is checked BY NAME. The rung used to ask only whether
+#: SOME committed log erased a token of the shape, so it never read the name
+#: beside it, and four entries went on citing `casting-1-pytest.log`,
 #: `casting-3-observations.log` and `casting-8-suite.log` for cycles after the
 #: tree stopped holding them — the human-readable pointer outliving the corpus
 #: while the mechanical rung stayed green. ``_grammar_witness_sweep`` now
 #: RESOLVES the named log and re-derives the shape from THAT log's own
 #: declarations, so a repointed or retired witness turns the sweep red rather
-#: than passing on a sibling's evidence. Repointing an entry means naming a
-#: log the tree holds today which declares this shape today; the trailing
-#: comments below record where each pointer moved from.
+#: than passing on a sibling's evidence. That rung is unchanged by D-006 and
+#: still the one that matters; what D-006 changed is WHERE the name resolves.
 #:
 #: C-103: a witness must not be collateral damage. ``planning_root`` and
 #: ``archive_root`` used to cite ``casting-10-blast-radius.log``, a
@@ -897,19 +929,33 @@ class _EnvironmentalGrammar:
 #: have turned a test in this module's own suite red from a commit in another
 #: casting's file, and nothing in the log, the ruling or the recapture
 #: instructions said so. A witness wants to be narrow and stable; a
-#: blast-radius log wants to be wide and derived; one log cannot be both. The
-#: two entries moved to ``casting-5-corpus-witness.log``, whose only job is to
-#: be that witness and which states the obligation in its own body — the one
-#: place a recapture actually happens. Every corpus witness below now names a
-#: log owned by the same casting as this registry, which is what keeps a
-#: peer's commit from being able to kill a grammar's witness at all.
+#: blast-radius log wants to be wide and derived; one log cannot be both.
+#:
+#: lead-stalls OT-010 (D-006): C-103's "narrow and stable" is the whole of the
+#: answer, and a run-corpus log cannot be stable no matter how narrow it is —
+#: F6 DONE deletes the directory it lives in. C-103 got as far as ruling that a
+#: witness must be owned by the same CASTING as this registry, so a peer's
+#: commit could not kill it; the run after that, the OWNING casting's own logs
+#: were stripped along with everyone else's and all five corpus witnesses died
+#: together. The narrowest, most stable log available is therefore not an
+#: evidence log at all — it is a suite FIXTURE, which ships with this registry
+#: and is deleted when this registry is. ``evidence_log_environmental_witness
+#: .log`` is that fixture: its only job is to be this witness, its body carries
+#: real tokens captured from a detached-worktree run at 5fdd193, and it states
+#: the obligation in its own header. See ``_KNOWN_WITNESS_KINDS`` above for why
+#: ``corpus`` is no longer one of the kinds an entry may claim.
 _ENVIRONMENTAL_GRAMMARS: dict[str, _EnvironmentalGrammar] = {
     "duration_seconds": _EnvironmentalGrammar(
         token=re.compile(r"\d+\.\d+s"),
         varies_in="digits",
         key=None,  # the `s` unit is in the token
-        witness_kind="corpus",
-        witness="casting-5-both-doors.log",  # D-051: was casting-1-pytest.log
+        # D-006: was the corpus log casting-5-both-doors.log (D-051: was
+        # casting-1-pytest.log). This is the ONE entry of the five that did not
+        # need a fixture: teammate.md already ships this exact pattern as the
+        # first of the four volatile examples it gives authors, so the protocol
+        # witnesses it directly and no second artifact has to.
+        witness_kind="protocol",
+        witness=r"# evidence-volatile: \d+\.\d+s",
         witness_pair=("", "0.47s", "0.76s"),
         falsifier=("", "0.47", "0.76"),  # strip the unit: a bare ratio-less number
         note=(
@@ -944,9 +990,12 @@ _ENVIRONMENTAL_GRAMMARS: dict[str, _EnvironmentalGrammar] = {
         token=re.compile(r"/\S*"),
         varies_in="text",
         key=re.compile(r"(?:^|\s)rootdir:$"),
-        witness_kind="corpus",
-        # D-051: was casting-3-observations.log
-        witness="casting-5-platform-witness.log",
+        # D-006: was casting-5-platform-witness.log (D-051: was
+        # casting-3-observations.log). Both were run-corpus logs; the fixture
+        # carries the same `rootdir:` line, captured in a detached worktree
+        # where the path is the relocated one this grammar exists to admit.
+        witness_kind="fixture",
+        witness="evidence_log_environmental_witness.log",
         witness_pair=(
             "rootdir:",
             "/Users/rayjanoka/ab/code/guild/plugins/foundry/mcp-server",
@@ -969,8 +1018,9 @@ _ENVIRONMENTAL_GRAMMARS: dict[str, _EnvironmentalGrammar] = {
         token=re.compile(r"/\S*"),
         varies_in="text",
         key=re.compile(r"(?:^|\s)platform \S+ -- Python \S+.* --$"),
-        witness_kind="corpus",
-        witness="casting-5-platform-witness.log",
+        # D-006: was casting-5-platform-witness.log, a run-corpus log.
+        witness_kind="fixture",
+        witness="evidence_log_environmental_witness.log",
         witness_pair=(
             "platform darwin -- Python 3.14.6, pytest-9.1.1, pluggy-1.6.0 --",
             "/Users/rayjanoka/.cache/uv/builds-v0/.tmphgnUSu/bin/python",
@@ -1010,10 +1060,12 @@ _ENVIRONMENTAL_GRAMMARS: dict[str, _EnvironmentalGrammar] = {
         token=re.compile(r"/\S*/\.planning/\S*"),
         varies_in="text",
         key=None,  # the `/.planning/` anchor is in the token
-        witness_kind="corpus",
-        # C-103: was casting-10-blast-radius.log (D-051: was
-        # casting-1-pytest.log). See the C-103 paragraph above the registry.
-        witness="casting-5-corpus-witness.log",
+        # D-006: was casting-5-corpus-witness.log (C-103: was
+        # casting-10-blast-radius.log; D-051: was casting-1-pytest.log). Three
+        # pointers, three run-corpus logs, three rots. See the D-006 paragraph
+        # above the registry.
+        witness_kind="fixture",
+        witness="evidence_log_environmental_witness.log",
         witness_pair=(
             "",
             "/private/var/folders/kq/T/tmp.X6ktF5/wt/.planning/phases/09",
@@ -1036,10 +1088,12 @@ _ENVIRONMENTAL_GRAMMARS: dict[str, _EnvironmentalGrammar] = {
         token=re.compile(r"/\S*/foundry-archive/\S*"),
         varies_in="text",
         key=None,  # the `/foundry-archive/` anchor is in the token
-        witness_kind="corpus",
-        # C-103: was casting-10-blast-radius.log (D-051: was
-        # casting-8-suite.log). See the C-103 paragraph above the registry.
-        witness="casting-5-corpus-witness.log",
+        # D-006: was casting-5-corpus-witness.log (C-103: was
+        # casting-10-blast-radius.log; D-051: was casting-8-suite.log). Sibling
+        # of `planning_root` in its pointer history too, and it rotted the same
+        # three times for the same one reason.
+        witness_kind="fixture",
+        witness="evidence_log_environmental_witness.log",
         witness_pair=(
             "",
             "/private/tmp/c3wt/foundry-archive/thunder-viper",
@@ -4498,6 +4552,78 @@ def sweep_evidence_at_head(
 # --------------------------------------------------------------------------- #
 
 
+# lead-stalls FR-011 / GI-005 / CT-005 / OT-006 / ST-004 — `LEAD_NEXT_CALL` IS
+# ON EVERY RETURN PATH BELOW, INCLUDING THE REFUSALS.
+#
+# US-003's shape: an acceptance is REFUSED, the lead reads a refusal naming what
+# is wrong and how to fix it, and then has nothing telling it where to re-enter
+# the protocol — so it deliberates at the boundary and the run parks with no
+# agent running (ST-003). A refusal that ends the run is a worse outcome than
+# the refusal was meant to produce, which is why GI-005 says every path and not
+# every SUCCESSFUL path.
+#
+# The constant is the leaf's, imported at the head of this module beside
+# `check_reported_prompt_hash` — see `tools/artifacts.py#LEAD_NEXT_CALL` for why
+# it lives there and not once per door. `tests/test_next_call_payloads.py` walks
+# every `return` in the function below and fails if one is added without the
+# key, which is what makes "every path" a property of the code rather than a
+# claim about it.
+
+
+def _record_acceptance_verdict(
+    casting_id: int | str,
+    project_root: str,
+    *,
+    refused: str | None,
+    information_loss: str = "",
+) -> None:
+    """Append the acceptance VERDICT this door reached to ``handoffs.jsonl``.
+
+    lead-stalls ST-004 / US-003 (D-020) — THE ROUTER CAN ONLY SEND A LEAD BACK
+    TO A CASTING IT CAN SEE WAS REFUSED.
+    ------------------------------------------------------------------------
+    A-014 put the refusal's routing in Foundry-Next: `next_call` is the same
+    literal on every path (FR-011), "Foundry-Next already knows whether the
+    casting was accepted". Driven at c5045c2 it did not. The only record this
+    door wrote was the final return's, with ``destination`` hard-wired to
+    ``casting-{id}-accepted`` — so a WARNED acceptance (`ok: False`, "Do NOT
+    accept this casting") was on disk as accepted, and no refusal wrote
+    anything at all. A refused casting was indistinguishable
+    from a built one, and following `next_call` sent the lead to tear the
+    wave down instead of back to reject + re-dispatch.
+
+    THE RECORD IS THE ONE THIS DOOR ALREADY WROTE, not a new file (GI-001):
+    same ``event``, same ``source``, and the verdict in the ``destination``
+    suffix, ``-accepted`` or ``-refused``. `guidance.py` reads the LAST such
+    record per manifest casting id and compares the whole string it builds
+    from that id, so the two sides never parse one another. The two spellings
+    live in two modules that may not import each other (AC-061);
+    `tests/test_next_call_payloads.py` drives this writer into that reader
+    end to end, which is what keeps them in step.
+
+    WRITTEN ONLY ONCE THE CALL IS ESTABLISHED. The rungs above the prompt
+    load — no run, no ``casting_commit``, an unhashable spec, a stale spec hash
+    — refuse the CALL, not the casting: nothing about the casting has been
+    judged yet, and a record there would let a malformed re-call flip an
+    accepted casting to refused. So those leave the casting's earlier state
+    standing, and ``source_reread`` is truthfully ``True`` on every record,
+    because each is written after the fresh spec hash matched.
+    """
+    outcome = "accepted" if refused is None else "refused"
+    record_handoff_event(
+        event="acceptance",
+        source=f"castings/casting-{casting_id}-prompt.md",
+        destination=f"casting-{casting_id}-{outcome}",
+        source_reread=True,
+        summary=(
+            f"casting {casting_id} acceptance {outcome}"
+            + (f": {refused}" if refused is not None else "")
+        ),
+        information_loss=information_loss,
+        project_root=project_root,
+    )
+
+
 def foundry_accept_casting(
     casting_id: int | str,
     spec_hash: str,
@@ -4513,7 +4639,9 @@ def foundry_accept_casting(
       1. Verifies spec_hash matches the current spec.md (forces re-read)
       2. Verifies prompt_hash matches the casting's prompt file (forces
          the lead to have read the authoritative prompt, not a memory)
-      3. Records the acceptance as a handoff entry
+      3. Records the verdict — ``casting-{id}-accepted`` or
+         ``casting-{id}-refused`` — as a handoff entry, on every path that
+         judged the casting (see ``_record_acceptance_verdict``)
       4. Returns the list of acceptance criteria from the casting's
          <spec_requirements> block so the lead can verify each against
          the completion report
@@ -4564,12 +4692,22 @@ def foundry_accept_casting(
              "evidence_provenance": [...],
              "evidence_tally": {"accepted": N, "rejected": N,
                                 "failure_tokens": [...]} | None,
-             "evidence_spec_path": str | None}
+             "evidence_spec_path": str | None,
+             "next_call": LEAD_NEXT_CALL}
         On failure:
-            {"ok": False, "error": "...", "hint": "..."}
+            {"ok": False, "error": "...", "hint": "...",
+             "next_call": LEAD_NEXT_CALL}
         On evidence rejection:
             {"ok": False, "failure_token": "EVIDENCE_*", "failure_detail": "...",
-             "evidence_provenance": [...], "evidence_tally": {...}}
+             "evidence_provenance": [...], "evidence_tally": {...},
+             "next_call": LEAD_NEXT_CALL}
+
+    ``next_call`` is on ALL THREE shapes and on every return path within them
+    (GI-005 / OT-006), which is why it is declared on each rather than noted
+    once below: this block is the payload's declared contract, and an additive
+    key listed in prose but absent from the shapes is an undocumented key. It
+    is purely additive — no key above it is renamed, retyped or removed
+    (FR-004 / NFR-002) — so every existing reader is unaffected.
 
     ``evidence_tally`` is the per-casting verdict count. It is a RETURN VALUE
     and never a printed line (D-149): this server speaks JSON-RPC over stdio,
@@ -4583,7 +4721,11 @@ def foundry_accept_casting(
     """
     fdir = get_run_dir(project_root)
     if not fdir:
-        return {"ok": False, "error": "No active foundry run"}
+        return {
+            "ok": False,
+            "error": "No active foundry run",
+            "next_call": LEAD_NEXT_CALL,
+        }
 
     # CT-015 / FR-010 / AC-015 / OT-027 — casting_commit is REQUIRED.
     #
@@ -4618,12 +4760,17 @@ def foundry_accept_casting(
             ),
             "casting_id": casting_id,
             "field": "casting_commit",
+            "next_call": LEAD_NEXT_CALL,
         }
 
     # Verify spec hash
     spec_result = foundry_spec_hash(project_root=project_root)
     if not spec_result.get("ok"):
-        return {"ok": False, "error": f"Cannot hash spec: {spec_result.get('error')}"}
+        return {
+            "ok": False,
+            "error": f"Cannot hash spec: {spec_result.get('error')}",
+            "next_call": LEAD_NEXT_CALL,
+        }
     current_spec_hash = spec_result["spec_hash"]
     if spec_hash != current_spec_hash:
         return {
@@ -4635,15 +4782,23 @@ def foundry_accept_casting(
                 f"fresh hash. Never accept a casting using a spec hash from "
                 f"memory — the spec may have been updated mid-run."
             ),
+            "next_call": LEAD_NEXT_CALL,
         }
 
     # Load the casting prompt
     prompt_path = fdir / "castings" / f"casting-{casting_id}-prompt.md"
     if not prompt_path.exists():
+        # D-020: from here down every return is a verdict on the casting, and
+        # each is recorded — see `_record_acceptance_verdict`.
+        _record_acceptance_verdict(
+            casting_id, project_root,
+            refused=f"casting-{casting_id}-prompt.md not found",
+        )
         return {
             "ok": False,
             "error": f"casting-{casting_id}-prompt.md not found",
             "hint": "Re-run F0.5 DECOMPOSE",
+            "next_call": LEAD_NEXT_CALL,
         }
 
     # D-146: the whole read sits behind ONE guarded call. A casting prompt that
@@ -4652,7 +4807,21 @@ def foundry_accept_casting(
     # named refusal — the D-137 family's exact shape, one door further along.
     prompt_text, prompt_problem = read_text_file(prompt_path)
     if prompt_problem is not None:
-        return document_refusal(prompt_path, prompt_problem)
+        # lead-stalls GI-005 / OT-006 — SPREAD AT THE CALL SITE, NEVER INSIDE
+        # THE HELPER. `document_refusal` is `foundry_state`'s house refusal with
+        # ten callers across six modules, and `check_reported_prompt_hash`
+        # below is the C-8 rung SHARED with `Foundry-Fix`
+        # (`orchestration/fix_gate.py`). Adding the key inside either would put
+        # `next_call` on the Foundry-Fix, Cast-Wave, Spawn-Teammate, Validate
+        # and Report payloads too — payloads this spec does not name, which is
+        # the exact non-additive blast radius FR-004 and NFR-002 forbid.
+        #
+        # These two are also why the build notes' "ten `return {` statements"
+        # undercounts: neither is a dict literal, so a sweep for `return {`
+        # walks straight past them and leaves two refusal paths with no
+        # `next_call` — the GI-005 violation, in the two places hardest to see.
+        _record_acceptance_verdict(casting_id, project_root, refused=prompt_problem)
+        return {**document_refusal(prompt_path, prompt_problem), "next_call": LEAD_NEXT_CALL}
 
     # CT-011 / AC-030 — the hash rung is `check_reported_prompt_hash`, not a
     # second inline comparison. Foundry-Fix applies the same check to the same
@@ -4663,7 +4832,13 @@ def foundry_accept_casting(
     # the check at BOTH doors.
     hash_refusal = check_reported_prompt_hash(fdir, casting_id, prompt_hash)
     if hash_refusal is not None:
-        return hash_refusal
+        # Spread, not mutated: `check_reported_prompt_hash` hands the SAME dict
+        # shape to `Foundry-Fix`, and an in-place `hash_refusal["next_call"] =`
+        # would edit an object this door does not own. See the note above.
+        _record_acceptance_verdict(
+            casting_id, project_root, refused=str(hash_refusal.get("error"))
+        )
+        return {**hash_refusal, "next_call": LEAD_NEXT_CALL}
 
     # Extract acceptance criteria from the <spec_requirements> block
     match = re.search(
@@ -4672,10 +4847,15 @@ def foundry_accept_casting(
         flags=re.DOTALL | re.IGNORECASE,
     )
     if not match:
+        _record_acceptance_verdict(
+            casting_id, project_root,
+            refused="casting prompt has no <spec_requirements> block",
+        )
         return {
             "ok": False,
             "error": "casting prompt has no <spec_requirements> block",
             "hint": "F0.9 VALIDATE should have caught this. Re-run validation.",
+            "next_call": LEAD_NEXT_CALL,
         }
 
     spec_block = match.group(1).strip()
@@ -4820,6 +5000,9 @@ def foundry_accept_casting(
     # `ok: true`. A typo in one frontmatter line bought a green gate.
     if _read_spec_format_version(evidence_spec_path) is None:
         declared = _declared_spec_format_version(evidence_spec_path)
+        _record_acceptance_verdict(
+            casting_id, project_root, refused="malformed_spec_format_version"
+        )
         return {
             "ok": False,
             "casting_id": casting_id,
@@ -4834,6 +5017,7 @@ def foundry_accept_casting(
                 f"frontmatter to a real version (e.g. `spec_format_version: "
                 f"v2.1`) and re-run acceptance."
             ),
+            "next_call": LEAD_NEXT_CALL,
         }
 
     evidence_result = verify_evidence(
@@ -4909,6 +5093,10 @@ def foundry_accept_casting(
     # record is the audit signal that evidence verification was
     # structurally bypassed for this run.
     if evidence_verdict == "rejected":
+        _record_acceptance_verdict(
+            casting_id, project_root,
+            refused=str(evidence_result["failure_token"]),
+        )
         return {
             "ok": False,
             "casting_id": casting_id,
@@ -4923,6 +5111,7 @@ def foundry_accept_casting(
                 "`# evidence-cmd:`. Re-run the command yourself, inspect "
                 "the diff, and re-dispatch with corrected evidence."
             ),
+            "next_call": LEAD_NEXT_CALL,
         }
 
     # ============================================================
@@ -4960,6 +5149,10 @@ def foundry_accept_casting(
         unbound = sorted(set(casting_req_ids) - bound_ids)
         if unbound:
             # Hard-reject with named missing IDs (SC#4 satisfied).
+            _record_acceptance_verdict(
+                casting_id, project_root,
+                refused="EVIDENCE_REQUIREMENT_UNBOUND: " + ", ".join(unbound),
+            )
             return {
                 "ok": False,
                 "casting_id": casting_id,
@@ -4983,6 +5176,7 @@ def foundry_accept_casting(
                     f"list). See plugins/foundry/agents/teammate.md Step 11 "
                     f"for the canonical evidence-file format."
                 ),
+                "next_call": LEAD_NEXT_CALL,
             }
 
     # Check for "out of scope" or "cut scope" mentions in the teammate report
@@ -5000,13 +5194,17 @@ def foundry_accept_casting(
     report_lower = completion_report.lower()
     scope_flags = [p for p in warning_phrases if p in report_lower]
     warning = None
+    # D-020: which warning fired, for the acceptance record below.
+    warning_reason: str | None = None
     if scope_flags:
+        warning_reason = "scope_flags: " + ", ".join(scope_flags)
         warning = (
             f"Teammate completion report contains scope-flag phrases: {scope_flags}. "
             f"Do NOT accept this casting. Re-dispatch with explicit instruction to "
             f"complete the missing work. Build-green is necessary but NOT sufficient."
         )
     elif missing_citations:
+        warning_reason = "missing_citations: " + ", ".join(missing_citations)
         warning = (
             f"Completion report is missing citations for "
             f"{len(missing_citations)} requirement(s): {', '.join(missing_citations)}. "
@@ -5020,6 +5218,7 @@ def foundry_accept_casting(
         # AC-006 — an unresolvable symbol is a defect, not a warning about
         # formatting. Named individually so the teammate can fix the cite
         # rather than re-scan the whole report.
+        warning_reason = "unresolved_symbol_cites"
         warning = (
             f"Completion report cites {len(unresolved_cites)} symbol(s) that resolve "
             f"nowhere in the tree: "
@@ -5031,17 +5230,19 @@ def foundry_accept_casting(
             f"run a cite-refresh sweep."
         )
 
-    # Record the acceptance attempt as a handoff entry.
+    # Record the acceptance verdict as a handoff entry.
     # Use the raw path string to avoid macOS /tmp ↔ /private/tmp symlink
     # mismatches during relative_to computation.
-    record_handoff_event(
-        event="acceptance",
-        source=f"castings/casting-{casting_id}-prompt.md",
-        destination=f"casting-{casting_id}-accepted",
-        source_reread=True,  # the MCP tool enforces it by requiring fresh hashes
-        summary=f"casting {casting_id} acceptance check",
+    #
+    # D-020: the verdict is `ok`'s, and `ok` below is `warning is None`. This
+    # wrote `casting-{id}-accepted` unconditionally, so a warned acceptance —
+    # the one commands/start.md answers with "reject + re-dispatch" — read on
+    # disk as accepted. Keyed on `warning` itself, so a warning branch added
+    # later without a reason of its own still records a refusal.
+    _record_acceptance_verdict(
+        casting_id, project_root,
+        refused=None if warning is None else (warning_reason or "warning"),
         information_loss=", ".join(scope_flags) if scope_flags else "",
-        project_root=project_root,
     )
 
     return {
@@ -5067,4 +5268,16 @@ def foundry_accept_casting(
         "evidence_spec_path": (
             str(evidence_spec_path) if evidence_spec_path is not None else None
         ),
+        # lead-stalls US-001 / CT-005 / OT-006 — the wave-boundary path, and the
+        # one this defect was actually filed about. `ok` here is
+        # `warning is None`, so this single return is BOTH the clean acceptance
+        # and the warned one; both carry the key, because a warned acceptance
+        # parks the run exactly as readily as a refused one.
+        #
+        # It sits beside `must_verify`, the six-item judgment checklist the
+        # Problem Statement blames for the stall: the checklist tells the lead
+        # what to THINK about and named nothing to CALL, so the turn ended on
+        # deliberation. The checklist is unchanged — it is doing its job — and
+        # this key answers the question it leaves open.
+        "next_call": LEAD_NEXT_CALL,
     }

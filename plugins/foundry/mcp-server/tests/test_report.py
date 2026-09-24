@@ -598,9 +598,26 @@ def drive_finer_boundary_run(tmp_path: Path) -> dict[str, object]:
         # not advance entering F5 (D-119).
         _ledger(("D-004", "D-005"))
         _streams_done(5)
-        (fdir / "verdicts.json").write_text(
-            json.dumps({"cycle": 5, "requirements": []}), encoding="utf-8"
-        )
+        # lead-stalls GI-008 / FR-007 (D-062) — ASSAY'S LEDGER, RECORDED
+        # THROUGH ASSAY'S DOOR.
+        #
+        # This wrote `{"cycle": 5, "requirements": []}` by hand and crossed
+        # into F5 on it. An EMPTY ledger beside a spec declaring 25
+        # requirements is "ASSAY has not run", and the DONE gate has always
+        # refused it — but the `temper` and `nyquist` doors made no coverage
+        # comparison, so this driver walked a crossing a real run's own gate
+        # would refuse one phase later. Both doors compare now, and the
+        # fixture records what it claims: one verdict per declared id,
+        # through `Foundry-Verdict`, which is the only writer a real ASSAY
+        # has. It touches verdicts.json and nothing else, so the state.json
+        # this drive returns is unchanged by it.
+        from foundry_mcp.tools.foundry import foundry_add_verdict
+
+        for rid in _SPEC_ROW_IDS:
+            recorded = foundry_add_verdict(
+                rid, "VERIFIED", "read at HEAD", project_root=str(root),
+            )
+            assert not recorded.get("error"), (rid, recorded)
         _cross("inspect_clean")
         _cross("temper")
         _streams_done(5)

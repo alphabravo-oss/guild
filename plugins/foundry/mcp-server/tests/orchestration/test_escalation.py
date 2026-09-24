@@ -304,7 +304,16 @@ def test_the_clean_f2_arms_name_a_persisted_escalated_class(run_env):
 
     nxt = foundry_next_action(project_root)
 
-    assert nxt["action"] == "transition_to_assay", nxt
+    # lead-stalls D-055 — named, and no longer sent on to ASSAY: every list
+    # past ASSAY ends at the DONE gate that refuses this class, and the one
+    # crossing that clears it is reachable from here. lead-stalls D-057 — that
+    # crossing is the F2 re-open now, which the server accepts from a clean
+    # FULL cycle while a class is held; the LATENT instances block nothing, so
+    # no GRIND that dispatches nobody has to be opened on them first.
+    assert nxt["action"] == "widen_inspect", nxt
+    assert [c["tool"] for c in nxt["next_calls"]] == [
+        "Foundry-Gate", "Foundry-Phase",
+    ], nxt["next_calls"]
     assert "FDC" in nxt["instructions"], nxt["instructions"]
     assert "ESCALATED" in nxt["instructions"]
     assert "ST-010" in nxt["instructions"]
@@ -368,6 +377,32 @@ def test_the_budget_arm_is_not_offered_to_a_class_that_cannot_spend_it(run_env):
         (fdir / ESCALATION_FILENAME).read_text(encoding="utf-8")
     )["classes"]["FDC"]
     assert entry["structural_packets_dispatched"] == 0, entry
+
+
+
+
+def test_the_done_refusal_names_the_crossings_the_graph_accepts(run_env):
+    """lead-stalls GI-008 / FR-007 (D-057) — the DONE gate's distance sentence
+    printed "Foundry-Phase(phase='inspect_start') out of F3 closes one" at F4,
+    F5 and F5.5, where a run holding a class with nothing open has no
+    accepted transition into F3: `grind_start` / `assay_fail` refuse "No open
+    defects to grind". The graph accepts the crossing in two places now, and
+    the sentence names both and what reaching either takes from past ASSAY.
+    Driven at the door, on the state the old sentence misled at."""
+    project_root, fdir = run_env
+    _escalated_fixture(fdir, open_instances=False)
+    _write_state(fdir, phase="F4", cycle=4)
+    _at_the_phase_for(fdir, "done")
+
+    outcome = _done_preconditions(fdir, project_root)
+
+    assert outcome["passed"] is False, outcome
+    assert "out of F3 closes one" not in outcome["hint"], outcome["hint"]
+    assert (
+        "accepted out of F3 and from a clean FULL F2 as the re-open a held "
+        "class earns"
+    ) in outcome["hint"], outcome["hint"]
+    assert "past ASSAY both are reached through a GRIND" in outcome["hint"], outcome["hint"]
 
 
 

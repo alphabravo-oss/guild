@@ -3127,6 +3127,15 @@ def _break_evidence(project_root, fdir, token, monkeypatch) -> bool:
 
 
 def _break_streams(project_root, fdir, token, monkeypatch) -> bool:
+    if token == "inspect_start":
+        # lead-stalls D-057 — this token's STREAMS rung is the held-class arm
+        # of the F2 re-open: a clean FULL cycle a still-ESCALATED class holds
+        # DONE shut over is re-opened only once the streams it closes have
+        # recorded. So the run stands at F2, FULL, with the class held.
+        state = json.loads((fdir / "state.json").read_text(encoding="utf-8"))
+        state["phase"] = "F2"
+        (fdir / "state.json").write_text(json.dumps(state), encoding="utf-8")
+        _escalated_fixture(fdir, open_instances=False)
     (fdir / ".trace-complete").unlink(missing_ok=True)
     return True
 

@@ -1,0 +1,47 @@
+# evidence-cmd: uv run --project plugins/foundry/mcp-server --with pytest python -c "import sys;sys.path.insert(0,'plugins/foundry/mcp-server/tests');import test_containment as t;M=t._measured_source_files();A=set() if M is None else M;R=t.SANCTIONED_SOURCE_FILES;W=t._cited_source_files();SP=[p for p in R if 'foundry_spawn' in p][0];GP=[p for p in R if p.endswith('/gates.py')][0];V=lambda cap,Rx,Mx:'UNMEASURABLE' if Mx is None else ('GREEN' if len(Mx)<=cap and not (Mx-Rx) and not (Rx-Mx) and not (W-Rx) and not (Rx-t.UNCITED_SANCTIONED_FILES-W) else 'RED');E=['plugins/foundry/mcp-server/tests/test_release_version.py','plugins/foundry/mcp-server/tests/test_containment.py','plugins/foundry/mcp-server/src/foundry_mcp/__init__.py','plugins/foundry/mcp-server/pyproject.toml','plugins/foundry/mcp-server/uv.lock','.claude-plugin/marketplace.json','plugins/foundry/.claude-plugin/plugin.json','README.md'];print('cap declared by lead-stalls NFR-001        '+str(t.SOURCE_FILE_CAP));print('measured from                             git diff --name-only -z '+t.BASE_COMMIT[:7]+'..HEAD');print('measurement available                     '+str(M is not None));print('source files the CHANGE touched           '+str(len(A)));print('\n'.join('  '+t._cap_class(r).ljust(17)+r for r in sorted(A)));print('measured count within cap                 '+str(M is not None and len(A)<=t.SOURCE_FILE_CAP));print('changed but NOT on the roster             '+str(sorted(A-R)));print('on the roster but NOT in the change       '+str(sorted(R-A)));print('');print('exemption rule, applied to the exempt sites');print('\n'.join('  '+t._cap_class(r).ljust(17)+r for r in E));print('');print('source files citing this run              '+str(len(W)));print('carved out, cite by other means           '+str(sorted(t.UNCITED_SANCTIONED_FILES)));print('cited but NOT sanctioned                  '+str(sorted(W-R)));print('sanctioned but citation lost              '+str(sorted(R-t.UNCITED_SANCTIONED_FILES-W)));print('');print('verdict                                   '+V(t.SOURCE_FILE_CAP,R,M));print('');print('CONTROLS -- lead-stalls D-071 was a log that could not go RED. Each');print('line below re-runs the same verdict over one mutation of this state.');print('  cap held at the pre-amendment 10        '+V(10,R,M));print('  roster short foundry_spawn.py           '+V(t.SOURCE_FILE_CAP,R-{SP},M));print('  roster short gates.py                   '+V(t.SOURCE_FILE_CAP,R-{GP},M));print('  a name on the roster the change misses  '+V(t.SOURCE_FILE_CAP,R|{'plugins/foundry/mcp-server/src/foundry_mcp/tools/orchestration/__init__.py'},M));print('  measurement unavailable                 '+V(t.SOURCE_FILE_CAP,R,None))"
+# evidence-for: NFR-001, FR-012, GI-006
+# evidence-timeout: 300
+
+cap declared by lead-stalls NFR-001        11
+measured from                             git diff --name-only -z dda6154..HEAD
+measurement available                     True
+source files the CHANGE touched           11
+  source           plugins/foundry/mcp-server/src/foundry_mcp/server.py
+  source           plugins/foundry/mcp-server/src/foundry_mcp/tools/artifacts.py
+  source           plugins/foundry/mcp-server/src/foundry_mcp/tools/evidence.py
+  source           plugins/foundry/mcp-server/src/foundry_mcp/tools/foundry_spawn.py
+  source           plugins/foundry/mcp-server/src/foundry_mcp/tools/orchestration/directives.py
+  source           plugins/foundry/mcp-server/src/foundry_mcp/tools/orchestration/escalation.py
+  source           plugins/foundry/mcp-server/src/foundry_mcp/tools/orchestration/gates.py
+  source           plugins/foundry/mcp-server/src/foundry_mcp/tools/orchestration/guidance.py
+  source           plugins/foundry/mcp-server/src/foundry_mcp/tools/orchestration/teams.py
+  source           plugins/foundry/mcp-server/src/foundry_mcp/tools/orchestration/transitions.py
+  source           plugins/foundry/scripts/serena-daemon.sh
+measured count within cap                 True
+changed but NOT on the roster             []
+on the roster but NOT in the change       []
+
+exemption rule, applied to the exempt sites
+  test             plugins/foundry/mcp-server/tests/test_release_version.py
+  test             plugins/foundry/mcp-server/tests/test_containment.py
+  release-manifest plugins/foundry/mcp-server/src/foundry_mcp/__init__.py
+  not-source       plugins/foundry/mcp-server/pyproject.toml
+  not-source       plugins/foundry/mcp-server/uv.lock
+  not-source       .claude-plugin/marketplace.json
+  not-source       plugins/foundry/.claude-plugin/plugin.json
+  not-source       README.md
+
+source files citing this run              8
+carved out, cite by other means           ['plugins/foundry/mcp-server/src/foundry_mcp/tools/foundry_spawn.py', 'plugins/foundry/mcp-server/src/foundry_mcp/tools/orchestration/directives.py', 'plugins/foundry/scripts/serena-daemon.sh']
+cited but NOT sanctioned                  []
+sanctioned but citation lost              []
+
+verdict                                   GREEN
+
+CONTROLS -- lead-stalls D-071 was a log that could not go RED. Each
+line below re-runs the same verdict over one mutation of this state.
+  cap held at the pre-amendment 10        RED
+  roster short foundry_spawn.py           RED
+  roster short gates.py                   RED
+  a name on the roster the change misses  RED
+  measurement unavailable                 UNMEASURABLE

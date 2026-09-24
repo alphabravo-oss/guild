@@ -1,11 +1,12 @@
 """READ THIS BEFORE WRITING A REQUIREMENT ID IN ANY TEST MODULE HERE.
 
-This run has THREE specs installed side by side, and they number their rows
+This run has FOUR specs installed side by side, and they number their rows
 identically:
 
   * ``forge-specs/foundry-run-process-fixes/spec.md``
   * ``forge-specs/foundry-run-convergence/spec.md``
   * ``forge-specs/foundry-run-fallout/spec.md``
+  * ``forge-specs/foundry-lead-stalls/spec.md``
 
 87 requirement ids exist in BOTH, across all eight families this suite cites
 (``US GI AC OT FR CT ST NFR``) -- every id the earlier spec numbers, the later
@@ -20,8 +21,9 @@ spec.
     process-fixes AC-001     cites forge-specs/foundry-run-process-fixes
     convergence AC-006       cites forge-specs/foundry-run-convergence
     fallout AC-056           cites forge-specs/foundry-run-fallout
+    lead-stalls FR-003       cites forge-specs/foundry-lead-stalls
 
-Three spellings, no fourth, and no default. A ``/``-joined run inherits the
+Exactly these spellings, and no default. A ``/``-joined run inherits the
 qualification of its head THROUGH REQUIREMENT IDS AND NOTHING ELSE: every
 segment between the qualification and the id has to itself be a requirement id
 of one of the families above, which is why ``convergence CT-002 / AC-019 /
@@ -89,14 +91,23 @@ ID_FAMILIES = frozenset(
 #: declares the data it applies to.
 LEGACY_ID_FAMILIES = frozenset({"AC", "OT", "FR", "CT", "ST", "NFR"})  # 6 items
 
-#: The three legal qualifications. Order is irrelevant; membership is the whole
-#: contract. A fourth spelling is a convention change, not a local decision.
+#: The legal qualifications. Order is irrelevant; membership is the whole
+#: contract. A new spelling is a convention change, not a local decision.
 #:
 #: `fallout ` joined them for the foundry-run-fallout release. The tuple pins
 #: every requirement-id citation under `tests/` to a spec NAME, and this run's
 #: teammates qualify theirs `fallout FR-NNN`; without the member every casting
 #: of the run fails the pin for writing the citation the convention asks for.
-QUALIFIERS = ("process-fixes ", "convergence ", "fallout ")
+#:
+#: `lead-stalls ` joined them for foundry-lead-stalls (4.11.1), on exactly the
+#: reasoning the row above records and for the same reason: its castings cite
+#: `lead-stalls FR-NNN`, its spec is installed at the path below like the other
+#: three, and until the member existed every one of them failed this pin for
+#: writing the citation the convention asks for. Added once, run-wide, rather
+#: than each casting adding `test_<its own>.py` to UNQUALIFIED_MODULES — that
+#: list is standing DEBT for prose predating the convention, and a citation
+#: written today to the convention's own shape is not debt.
+QUALIFIERS = ("process-fixes ", "convergence ", "fallout ", "lead-stalls ")
 
 #: Which spec each qualification names. Derived from `QUALIFIERS` at import so
 #: the refusal below cannot advertise a narrower set than the scan enforces --
@@ -107,6 +118,7 @@ QUALIFIER_SPECS = {
     "process-fixes ": "forge-specs/foundry-run-process-fixes/spec.md",
     "convergence ": "forge-specs/foundry-run-convergence/spec.md",
     "fallout ": "forge-specs/foundry-run-fallout/spec.md",
+    "lead-stalls ": "forge-specs/foundry-lead-stalls/spec.md",
 }
 
 #: The accepted spellings, one per line, as the refusal prints them.

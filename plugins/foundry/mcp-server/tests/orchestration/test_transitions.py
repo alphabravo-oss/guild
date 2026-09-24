@@ -2766,28 +2766,197 @@ def test_the_clean_f2_arm_names_the_crossing_the_server_accepts_from_f2(run_env)
     sends a lead to make it has to name a call the server takes.
 
     The recorded width here is FULL / final_gate, which is what a clean cycle
-    that reached ASSAY looks like. Driven at cycle 8:
-    `Foundry-Phase('inspect_start')` from that F2 is refused and the counter
-    does not move; the sequence that closes one clean cycle is `grind_start`
-    then `inspect_start`. Both halves are asserted — the arm names the working
-    sequence, and the call it used to name is shown to be the refusal it is.
+    that reached ASSAY looks like, and the class's instances are all fixed.
+    D-153 had this arm serve ASSAY and name `grind_start` then `inspect_start`
+    in its CONTEXT; lead-stalls D-055 drove both of those refused on this very
+    state ("No open defects to grind"; "nothing to widen"), and the ASSAY list
+    beside them led to a DONE gate that refused the class forever, so D-055
+    answered `escalation_held`, NONE.
+
+    lead-stalls D-057 gave the state its exit: the F2 re-open is accepted from
+    a clean FULL cycle while a class is held. The arm serves that list — the
+    `inspect_start` gate, then the transition — and following it is accepted
+    at both doors and advances the counter. `grind_start` is still refused,
+    and the CONTEXT does not name it.
     """
     project_root, fdir = run_env
     _escalated_fixture(fdir, open_instances=False)
     _clean_f2(project_root, fdir)
 
     nxt = foundry_next_action(project_root)
-    instructions = nxt["instructions"]
+    context = nxt["instructions"].split("\nCONTEXT:", 1)[1]
 
-    assert nxt["action"] == "transition_to_assay", nxt
-    assert "grind_start" in instructions, instructions
-    assert "REFUSED" in instructions, instructions
+    assert nxt["action"] == "widen_inspect", nxt
+    assert [(c["tool"], c["args"]) for c in nxt["next_calls"]] == [
+        ("Foundry-Gate", "phase='inspect_start'"),
+        ("Foundry-Phase", "phase='inspect_start'"),
+    ], nxt["next_calls"]
+    assert "grind_start" not in context, context
 
-    # ...and the call the arm used to name really is refused from here.
+    # The GRIND crossing the arm once named is still refused from here...
     _arm_ordering_token(fdir)
-    refused = foundry_mark_phase_complete("inspect_start", project_root)
+    refused = foundry_mark_phase_complete("grind_start", project_root)
     assert refused.get("ok") is not True, refused
-    assert "nothing to widen" in refused["error"], refused
+    assert "No open defects to grind" in refused["error"], refused
+
+    # ...and the one the arm serves is accepted at both doors.
+    _arm_ordering_token(fdir)
+    assert foundry_gate("inspect_start", project_root)["passed"] is True
+    _arm_ordering_token(fdir)
+    crossed = foundry_mark_phase_complete("inspect_start", project_root)
+    assert crossed.get("ok") is True, crossed
+    assert (crossed["phase"], crossed["cycle"], crossed["widened"]) == ("F2", 5, True)
+
+
+
+
+# --------------------------------------------------------------------------- #
+# lead-stalls GI-008 / FR-007 (D-057) — THE F2 RE-OPEN OF A CLEAN FULL CYCLE A
+# HELD CLASS HOLDS DONE SHUT OVER.
+#
+# The rung `_inspect_start_preconditions` states for the F2 arm passed only a
+# DELTA width, so a class persisted ESCALATED with nothing open at a clean FULL
+# F2 had no accepted counter-advancing crossing. It passes a FULL width now
+# when a class is in the DONE gate's union, nothing blocks and every stream the
+# cycle required has recorded. Each rung is driven at BOTH doors, because the
+# routine is shared and a refusal only one door made is D-240's shape.
+# --------------------------------------------------------------------------- #
+
+
+def _held_full_f2(project_root: str, fdir: Path, *, open_instances: bool = False) -> None:
+    """A clean FULL F2 at cycle 4 with FDC persisted ESCALATED (escalated at 3)."""
+    _escalated_fixture(fdir, open_instances=open_instances)
+    _clean_f2(project_root, fdir)
+
+
+def _both_doors(project_root: str, fdir: Path) -> tuple[dict, dict]:
+    _arm_ordering_token(fdir)
+    gate = foundry_gate("inspect_start", project_root)
+    _arm_ordering_token(fdir)
+    return gate, foundry_mark_phase_complete("inspect_start", project_root)
+
+
+@pytest.mark.parametrize(
+    "open_instances", [False, True], ids=["nothing-open", "latent-open"],
+)
+def test_the_f2_re_open_accepts_a_clean_full_cycle_with_a_class_held(
+    run_env, open_instances,
+):
+    """Accepts: FULL + held + zero blocking + the cycle's streams recorded. The
+    crossing is the DELTA re-open's: the counter advances, FULL / final_gate is
+    recorded, and ST-001's clean arm counts the cycle it closed. The recorded
+    detail names the arm that fired rather than a DELTA cycle that never ran.
+    With the class's LATENT instances open the answer is the same: they block
+    nothing, so no GRIND has to be opened on them first."""
+    project_root, fdir = run_env
+    _held_full_f2(project_root, fdir, open_instances=open_instances)
+
+    gate, crossed = _both_doors(project_root, fdir)
+
+    assert gate["passed"] is True, gate
+    assert crossed.get("ok") is True, crossed
+    assert (crossed["cycle"], crossed["inspect_mode"], crossed["inspect_rule"]) == (
+        5, "FULL", "final_gate",
+    ), crossed
+    entry = json.loads((fdir / "escalation.json").read_text(encoding="utf-8"))["classes"]["FDC"]
+    assert entry["live_clean_cycles_counted"] == [4], entry
+    recorded = json.loads((fdir / "state.json").read_text(encoding="utf-8"))["inspect_modes"][-1]
+    assert "DELTA" not in recorded["rule_detail"], recorded
+    assert "FDC" in recorded["rule_detail"], recorded
+    held_check = next(
+        c for c in gate["checklist"] if c["check"].startswith("reopenable_cycle")
+    )
+    assert held_check["ok"] is True and held_check["still_escalated_classes"] == ["FDC"]
+
+
+def test_the_f2_re_open_still_refuses_a_full_cycle_with_nothing_held(run_env):
+    """Still refuses: FULL + nothing held. "nothing to widen" stands, it says
+    why (no class is held), and its hint no longer names `grind_start` as the
+    way out of a FULL cycle — that is refused whenever nothing is open."""
+    project_root, fdir = run_env
+    _clean_f2(project_root, fdir)
+    _defect_ledger(fdir, [])
+
+    gate, refused = _both_doors(project_root, fdir)
+
+    assert gate["passed"] is False, gate
+    assert refused.get("ok") is not True, refused
+    for answer in (gate["reason"], refused["error"]):
+        assert "nothing to widen" in answer, answer
+        assert "no defect class is still ESCALATED" in answer, answer
+    hint = refused.get("hint") or gate.get("hint")
+    assert "Foundry-Phase(phase='inspect_clean')" in hint, hint
+    assert "opens on an open defect" in hint, hint
+    assert "From a FULL cycle, call" not in hint, hint
+    state = json.loads((fdir / "state.json").read_text(encoding="utf-8"))
+    assert (state["phase"], state["cycle"]) == ("F2", 4), state
+
+
+def test_the_f2_re_open_still_refuses_a_held_class_over_a_blocking_defect(run_env):
+    """Still refuses: FULL + held + a LIVE defect open. The width rung passes —
+    the class earns the re-open — and the blocking rung speaks: widening over
+    code the GRIND is about to change re-verifies a tree that will not exist."""
+    project_root, fdir = run_env
+    _held_full_f2(project_root, fdir)
+    ledger = json.loads((fdir / "defects.json").read_text(encoding="utf-8"))
+    ledger["defects"].append(_tiered("D-009", "LIVE", cycle=4))
+    (fdir / "defects.json").write_text(json.dumps(ledger), encoding="utf-8")
+
+    gate, refused = _both_doors(project_root, fdir)
+
+    assert gate["passed"] is False and refused.get("ok") is not True, (gate, refused)
+    for answer in (gate["reason"], refused["error"]):
+        assert "Cannot re-open INSPECT at full width" in answer, answer
+        assert "D-009" in answer, answer
+    state = json.loads((fdir / "state.json").read_text(encoding="utf-8"))
+    assert (state["phase"], state["cycle"]) == ("F2", 4), state
+
+
+def test_the_source_refusal_names_both_f2_re_opens(run_env):
+    """Past ASSAY the crossing is still refused by source phase, held class or
+    not — the re-open is an F2 crossing — and the refusal's statement of where
+    `inspect_start` IS accepted names both F2 arms, so a lead holding a class
+    at F4 is not told the F2 re-open exists only for a DELTA cycle."""
+    project_root, fdir = run_env
+    _escalated_fixture(fdir, open_instances=False)
+    _write_state(fdir, phase="F4", cycle=4)
+    _record_full_inspect_mode(fdir, cycle=4)
+
+    gate, refused = _both_doors(project_root, fdir)
+
+    assert gate["passed"] is False and refused.get("ok") is not True, (gate, refused)
+    for answer in (gate["reason"], refused["error"]):
+        assert "Cannot start an INSPECT from phase F4" in answer, answer
+        assert (
+            "the widening re-open of a DELTA cycle or of a clean FULL cycle a "
+            "still-ESCALATED class holds DONE shut over"
+        ) in " ".join(answer.split()), answer
+
+
+def test_the_held_re_open_cannot_count_a_cycle_no_stream_inspected(run_env):
+    """Still refuses: FULL + held + the cycle's streams not all recorded. The
+    DELTA arm limits itself (its crossing records FULL, which it refuses); the
+    held arm does not, so without this rung two back-to-back calls clear the
+    class over two cycles no stream ran — D-057's old shape, a clean cycle
+    counted by a call. Driven: one accepted crossing, then the same call again
+    at once, refused naming the missing streams, with nothing counted twice."""
+    project_root, fdir = run_env
+    _held_full_f2(project_root, fdir)
+
+    _gate, first = _both_doors(project_root, fdir)
+    assert first.get("ok") is True, first
+
+    gate, again = _both_doors(project_root, fdir)
+
+    assert gate["passed"] is False and again.get("ok") is not True, (gate, again)
+    for answer in (gate["reason"], again["error"]):
+        assert "streams have not all recorded" in answer, answer
+        assert "FDC" in answer, answer
+    entry = json.loads((fdir / "escalation.json").read_text(encoding="utf-8"))["classes"]["FDC"]
+    assert entry["status"] == "ESCALATED", entry
+    assert entry["live_clean_cycles_counted"] == [4], entry
+    state = json.loads((fdir / "state.json").read_text(encoding="utf-8"))
+    assert (state["phase"], state["cycle"]) == ("F2", 5), state
 
 
 

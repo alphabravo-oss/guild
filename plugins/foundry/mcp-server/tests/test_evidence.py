@@ -58,6 +58,7 @@ import inspect
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -3865,16 +3866,33 @@ def test_each_d143_shape_really_did_buy_a_byte_match(
 
 _TEAMMATE_PROTOCOL = REPO_ROOT / "plugins/foundry/agents/teammate.md"
 
+#: lead-stalls OT-010 (D-006) — the other half of what witnesses the registry.
+#:
+#: The permanent fixture corpus, which ships with this suite. It is NOT
+#: ``REPO_ROOT / "evidence"``: that directory is the RUN corpus, and foundry's
+#: own F6 DONE step ends every run with ``git rm -r evidence/``, so a shipped
+#: registry entry pointed into it is pointed at something scheduled for
+#: deletion before the next run reads it. Five entries died that way at
+#: ce5b416 and four had died the same way one run earlier (D-051), each time
+#: repaired by repointing at a run log that was itself deleted on schedule.
+#: A witness has to have the LIFETIME of the thing it witnesses.
+_FIXTURE_CORPUS = Path(__file__).resolve().parent / "fixtures" / "evidence"
 
-def _corpus_witness_fields_by_log() -> dict:
-    """Every ``(key_context, token)`` the corpus erases, BY the log that erases it.
 
-    Derived: each committed log's declared patterns applied to that log's own
+def _witness_fields_by_log() -> dict:
+    """Every ``(key_context, token)`` a fixture erases, BY the log that erases it.
+
+    Derived: each shipped log's declared patterns applied to that log's own
     body, matches tokenized the way the guard tokenizes them, and each token
     paired with the span text PRECEDING it — which is exactly the pair
-    ``_field_disagreement_problem`` hands the registry. This is what "the
-    corpus exercises this grammar" means mechanically — no hand-copied list of
-    which log proves what.
+    ``_field_disagreement_problem`` hands the registry. This is what "something
+    in the tree exercises this grammar" means mechanically — no hand-copied
+    list of which log proves what.
+
+    lead-stalls OT-010 (D-006): reads ``_FIXTURE_CORPUS``, not the run corpus.
+    The derivation is byte-for-byte the one it always was; only the directory
+    changed, from the one the protocol deletes every run to the one that ships
+    with this file.
 
     D-156: the context half is the whole point. Before it, six grammars could
     share one witness because every one of them fullmatched the same `/x/y`
@@ -3892,12 +3910,23 @@ def _corpus_witness_fields_by_log() -> dict:
     import re as _re
 
     by_log: dict = {}
-    evidence_dir = REPO_ROOT / "evidence"
-    for log in sorted(evidence_dir.glob("*.log")):
+    for log in sorted(_FIXTURE_CORPUS.glob("*.log")):
         text = log.read_text(encoding="utf-8")
         body = evidence._strip_leading_header_block(text)
         fields = set()
-        for pattern in evidence._parse_evidence_header(text).get("volatile", []):
+        # lead-stalls OT-010 (D-006): several fixtures here are DELIBERATELY
+        # malformed — `evidence_log_for_malformed.log` exists so the header
+        # parser has something to reject — so `_parse_evidence_header` raising
+        # is a property of the corpus, not a failure of this sweep. Such a log
+        # is registered with NO fields rather than dropped: the name still
+        # resolves, so an entry citing it is reported as naming a log that
+        # witnesses nothing, which is true, instead of as naming a log the
+        # corpus does not hold, which would not be.
+        try:
+            declared = evidence._parse_evidence_header(text).get("volatile", [])
+        except Exception:
+            declared = []
+        for pattern in declared:
             try:
                 matches = list(_re.finditer(pattern, body))
             except _re.error:
@@ -3919,26 +3948,32 @@ def _grammar_witness_sweep() -> tuple:
     whose declared witness no longer exercises them — a dead grammar, which is
     how an allowlist silently widens.
 
-    D-156 added the KEY to the corpus rung: a grammar that identifies its field
-    by the text beside the token must find a committed span that carries that
-    key, not merely a token of the right shape. Six of the seven entries
-    fullmatch `/x/y`; without the key half, one rootdir line would witness them
-    all and a grammar could be arbitrarily wider than the thing keeping it
-    alive.
+    D-156 added the KEY to the log rung: a grammar that identifies its field
+    by the text beside the token must find a span that carries that key, not
+    merely a token of the right shape. Six of the seven entries fullmatch
+    `/x/y`; without the key half, one rootdir line would witness them all and a
+    grammar could be arbitrarily wider than the thing keeping it alive.
 
-    D-051 added the NAME. Until it, the corpus branch never read ``witness`` at
+    D-051 added the NAME. Until it, the log branch never read ``witness`` at
     all — it asked whether SOME committed log erased the shape, so the name
     beside the shape was prose, and four entries went on citing
     `casting-1-pytest.log`, `casting-3-observations.log` and
     `casting-8-suite.log` for cycles after the tree stopped holding them. The
-    protocol branch had always resolved its witness; the corpus branch now does
+    protocol branch had always resolved its witness; the log branch now does
     the same, in the two directions a pointer can rot: the named log is gone,
-    or the named log is committed but its own declarations no longer erase this
+    or the named log ships but its own declarations no longer erase this
     shape. Sharing one log between entries stays legal — the key half already
     tells the fields apart — but citing a log that does not witness you does
     not.
+
+    lead-stalls OT-010 (D-006) changed WHICH LOGS the named branch resolves
+    against, and nothing else. It used to read the run corpus under
+    ``evidence/``; it now reads ``_FIXTURE_CORPUS``. Both D-156's key rung and
+    D-051's name rung are untouched, and the branch is no weaker: it is aimed
+    at a corpus the protocol does not delete between runs, which is the one
+    property that made the old aim fail on a schedule rather than by accident.
     """
-    corpus_by_log = _corpus_witness_fields_by_log()
+    fixtures_by_log = _witness_fields_by_log()
     protocol_text = (
         _TEAMMATE_PROTOCOL.read_text(encoding="utf-8")
         if _TEAMMATE_PROTOCOL.exists()
@@ -3952,19 +3987,23 @@ def _grammar_witness_sweep() -> tuple:
                 f"{name}: its own sample {grammar.sample!r} does not match it"
             )
             continue
-        if grammar.witness_kind == "corpus":
+        if grammar.witness_kind == "fixture":
             under_key = (
                 f" under the key {grammar.key.pattern!r}"
                 if grammar.key is not None
                 else ""
             )
-            witness_fields = corpus_by_log.get(grammar.witness)
+            witness_fields = fixtures_by_log.get(grammar.witness)
             if witness_fields is None:
                 offenders.append(
-                    f"{name}: declares the corpus witness {grammar.witness!r}, "
-                    f"which evidence/ no longer holds — repoint it at a log the "
-                    f"tree carries today whose own patterns erase a token of "
-                    f"this shape{under_key}, a token like {grammar.sample!r}"
+                    f"{name}: declares the fixture witness {grammar.witness!r}, "
+                    f"which {_FIXTURE_CORPUS.name}/ does not hold — add or "
+                    f"repoint it at a fixture log whose own patterns erase a "
+                    f"token of this shape{under_key}, a token like "
+                    f"{grammar.sample!r}. It must be a FIXTURE and not a log "
+                    f"under evidence/: lead-stalls OT-010 (D-006) — the run "
+                    f"corpus is deleted by F6 DONE every run, so a pointer into "
+                    f"it dangles again by the next one"
                 )
             elif not any(
                 grammar.token.fullmatch(tok)
@@ -3972,10 +4011,10 @@ def _grammar_witness_sweep() -> tuple:
                 for context, tok in witness_fields
             ):
                 offenders.append(
-                    f"{name}: declares the corpus witness {grammar.witness!r}, "
-                    f"which is committed but whose own patterns no longer erase "
+                    f"{name}: declares the fixture witness {grammar.witness!r}, "
+                    f"which ships but whose own patterns no longer erase "
                     f"a token of this shape{under_key}. C-103: if you just "
-                    f"recaptured {grammar.witness}, that log owes this registry "
+                    f"edited {grammar.witness}, that log owes this registry "
                     f"BOTH halves — a body line carrying a token like "
                     f"{grammar.sample!r} and a '# evidence-volatile:' header "
                     f"declaration that erases it. Restore both, or repoint "
@@ -3990,8 +4029,9 @@ def _grammar_witness_sweep() -> tuple:
                 )
         else:
             offenders.append(
-                f"{name}: witness_kind={grammar.witness_kind!r} is neither "
-                f"'corpus' nor 'protocol', so nothing keeps it alive"
+                f"{name}: witness_kind={grammar.witness_kind!r} is not one of "
+                f"{sorted(evidence._KNOWN_WITNESS_KINDS)}, so nothing keeps it "
+                f"alive"
             )
     return members_seen, offenders
 
@@ -4004,9 +4044,16 @@ def test_every_declared_grammar_has_a_live_witness():
     alive — a committed log whose own declaration erases a token of that
     shape, or the literal `# evidence-volatile:` example agents/teammate.md
     ships to authors — and this sweep re-derives both from the tree.
+
+    lead-stalls OT-010 (D-006): THIS RULE NO LONGER SKIPS. It used to open with
+    `if not (REPO_ROOT / "evidence").exists(): pytest.skip(...)`, and that guard
+    is why five dead pointers were invisible for a whole run rather than for a
+    commit. Both artifacts it now reads — the fixture corpus and the protocol
+    document — ship with this suite, so there is no state of the tree in which
+    the registry is unwitnessable AND this rule is quiet about it. A guard that
+    disarms itself exactly when the corpus it reads has gone is a guard that
+    reports nothing on the one day it mattered.
     """
-    if not (REPO_ROOT / "evidence").exists():
-        pytest.skip("no committed evidence corpus")
     members_seen, offenders = _grammar_witness_sweep()
     assert members_seen == set(evidence._ENVIRONMENTAL_GRAMMARS), (
         "the sweep did not walk the whole registry"
@@ -4090,9 +4137,11 @@ def test_a_grammar_with_no_live_witness_is_reported_by_name(monkeypatch):
     A witness sweep that cannot fail is decoration. A grammar is planted whose
     protocol witness exists nowhere in the tree; the sweep must name it rather
     than report a clean number over the members it happened to know.
+
+    lead-stalls OT-010 (D-006): the run-corpus skip is gone here too. A
+    negative control that stands down whenever `evidence/` is absent proves the
+    sweep can fail only on days the sweep was already running.
     """
-    if not (REPO_ROOT / "evidence").exists():
-        pytest.skip("no committed evidence corpus")
     planted = dict(evidence._ENVIRONMENTAL_GRAMMARS)
     planted["build_number"] = evidence._EnvironmentalGrammar(
         token=re.compile(r"build#\d+"),
@@ -4114,20 +4163,29 @@ def test_a_grammar_with_no_live_witness_is_reported_by_name(monkeypatch):
     )
 
 
-def test_a_corpus_witness_pointer_must_name_a_log_that_still_witnesses_it(
+def test_a_named_witness_pointer_must_name_a_log_that_still_witnesses_it(
     monkeypatch,
 ):
     """D-051: the NAMED witness, not merely SOME witness.
 
-    The plant that would have caught the defect. Before this rung the corpus
+    The plant that would have caught the defect. Before this rung the named-log
     branch never read ``witness``: it asked whether SOME committed log erased a
     token of the shape, and 40-odd logs erase a duration, so `duration_seconds`
     could go on citing `casting-1-pytest.log` — a log the tree had not held for
     cycles — and the sweep stayed green. `pytest_rootdir`, `planning_root` and
     `archive_root` rotted the same way behind the same green. That is the
-    registry-coherence half of GI-006: the corpus stays re-executable, and the
-    pointers INTO it stay resolvable, or the provenance the block comment calls
-    "checked, not asserted" is asserted after all.
+    registry-coherence half of GI-006: the witness corpus stays readable, and
+    the pointers INTO it stay resolvable, or the provenance the block comment
+    calls "checked, not asserted" is asserted after all.
+
+    lead-stalls OT-010 (D-006): the anchor is derived from the witness KIND
+    that names a log, rather than from the literal `"corpus"` this test used to
+    hardcode. When the registry's log-resolving kind was renamed, a hardcoded
+    anchor would have selected nothing and `assert anchor is not None` would
+    have read as "the registry declares no such witness at all" — planting, in
+    the regression test for stale pointers, a stale pointer of its own. The
+    property being driven is unchanged: a name that resolves to nothing, and a
+    name that resolves to the wrong log, must BOTH be reported.
 
     Two plants, because a pointer rots in two directions, and BOTH were green
     under the old rung:
@@ -4152,23 +4210,24 @@ def test_a_corpus_witness_pointer_must_name_a_log_that_still_witnesses_it(
     non-witnessing log are both DERIVED from what ships — hardcoding either
     would plant, in the regression test for stale pointers, a stale pointer.
     """
-    if not (REPO_ROOT / "evidence").exists():
-        pytest.skip("no committed evidence corpus")
-
+    named_kinds = evidence._KNOWN_WITNESS_KINDS - {"protocol"}
     anchor = next(
         (
             name
             for name, g in evidence._ENVIRONMENTAL_GRAMMARS.items()
-            if g.witness_kind == "corpus"
+            if g.witness_kind in named_kinds
         ),
         None,
     )
-    assert anchor is not None, "the registry declares no corpus witness at all"
+    assert anchor is not None, (
+        f"the registry declares no witness of any log-naming kind "
+        f"({sorted(named_kinds)}) at all"
+    )
     real = evidence._ENVIRONMENTAL_GRAMMARS[anchor]
 
-    # Direction 1 — a name evidence/ does not hold.
-    dead = "casting-0-this-log-was-never-committed.log"
-    assert not (REPO_ROOT / "evidence" / dead).exists(), (
+    # Direction 1 — a name the witness corpus does not hold.
+    dead = "evidence_log_this_fixture_was_never_shipped.log"
+    assert not (_FIXTURE_CORPUS / dead).exists(), (
         f"{dead} exists, so it cannot stand in for a retired log"
     )
     planted = dict(evidence._ENVIRONMENTAL_GRAMMARS)
@@ -4176,12 +4235,13 @@ def test_a_corpus_witness_pointer_must_name_a_log_that_still_witnesses_it(
     monkeypatch.setattr(evidence, "_ENVIRONMENTAL_GRAMMARS", planted)
     _, offenders = _grammar_witness_sweep()
     assert any(anchor in o and dead in o for o in offenders), (
-        f"a witness naming a log the corpus no longer holds went unreported "
-        f"— this is D-051 exactly: {offenders}"
+        f"a witness naming a log the witness corpus does not hold went "
+        f"unreported — this is D-051 exactly: {offenders}"
     )
 
-    # Direction 2 — a name evidence/ DOES hold, which does not witness it.
-    by_log = _corpus_witness_fields_by_log()
+    # Direction 2 — a name the witness corpus DOES hold, which does not
+    # witness it.
+    by_log = _witness_fields_by_log()
     wrong = next(
         (
             log_name
@@ -4192,8 +4252,8 @@ def test_a_corpus_witness_pointer_must_name_a_log_that_still_witnesses_it(
     )
     if wrong is None:
         pytest.skip(
-            f"every committed log erases a {anchor!r}-shaped token, so the "
-            f"corpus offers no live-but-wrong pointer to plant"
+            f"every shipped fixture erases a {anchor!r}-shaped token, so the "
+            f"witness corpus offers no live-but-wrong pointer to plant"
         )
     planted = dict(evidence._ENVIRONMENTAL_GRAMMARS)
     planted[anchor] = dataclasses.replace(real, witness=wrong)
@@ -4201,7 +4261,7 @@ def test_a_corpus_witness_pointer_must_name_a_log_that_still_witnesses_it(
     _, offenders = _grammar_witness_sweep()
     named = [o for o in offenders if anchor in o and wrong in o]
     assert named, (
-        f"a witness naming a committed log that does not declare this shape "
+        f"a witness naming a shipped log that does not declare this shape "
         f"went unreported: {offenders}"
     )
     # C-103: the refusal must say what the named log OWES, not only that it
@@ -4215,6 +4275,32 @@ def test_a_corpus_witness_pointer_must_name_a_log_that_still_witnesses_it(
     ), (
         f"the refusal does not tell the owner of {wrong} what to restore to "
         f"go on witnessing {anchor}: {named}"
+    )
+
+
+def test_every_grammar_declares_a_known_witness_kind():
+    """lead-stalls OT-010 (D-006): the `witness_kind` axis is closed too.
+
+    The sibling of the `varies_in` rung below, and it did not exist while there
+    were three kinds. It matters now because one of the three was RETIRED:
+    `"corpus"` — a log under the run's `evidence/` directory — cannot keep a
+    shipped registry entry alive, because F6 DONE deletes that directory at the
+    end of every run. Five entries claimed it and were dead pointers for a
+    whole run; the sweep's trailing `else` reported an unknown kind, but only
+    for a kind nobody had ever written. This rung names the retirement so the
+    next author who reaches for `"corpus"` is told, at the registry, rather
+    than after committing a log that is already scheduled for deletion.
+    """
+    unknown = {
+        name: g.witness_kind
+        for name, g in evidence._ENVIRONMENTAL_GRAMMARS.items()
+        if g.witness_kind not in evidence._KNOWN_WITNESS_KINDS
+    }
+    assert unknown == {}, (
+        f"grammars whose witness kind nothing resolves: {unknown}. The kinds "
+        f"are {sorted(evidence._KNOWN_WITNESS_KINDS)}; 'corpus' was retired by "
+        f"lead-stalls OT-010 (D-006) because the run corpus does not outlive "
+        f"the run"
     )
 
 
@@ -4240,8 +4326,14 @@ def test_an_unreadable_variation_site_is_reported_not_admitted(monkeypatch):
         token=re.compile(r"\d+\.\d+s"),
         varies_in="whenever",
         key=None,
-        witness_kind="corpus",
-        witness="casting-5-both-doors.log",  # D-051: was casting-1-pytest.log
+        # lead-stalls OT-010 (D-006): the plant carries the SHIPPED entry's own
+        # witness, re-read from the registry rather than re-typed, so a plant
+        # for the `varies_in` axis can never go stale on the witness axis. It
+        # named `casting-5-both-doors.log` — a run-corpus log deleted at
+        # ce5b416 — for a whole run while this test stayed green, because
+        # nothing here resolves a witness at all.
+        witness_kind=evidence._ENVIRONMENTAL_GRAMMARS["duration_seconds"].witness_kind,
+        witness=evidence._ENVIRONMENTAL_GRAMMARS["duration_seconds"].witness,
         witness_pair=("", "4.86s", "4.91s"),
         falsifier=("", "4.86", "4.91"),
         note="planted",
@@ -6903,24 +6995,96 @@ def test_the_syntax_check_never_executes_what_it_parses(tmp_path):
     )
 
 
-#: The population floor for the corpus-wide lint below (fallout D-166).
+#: The population floor for the corpus-wide lint below (fallout D-166,
+#: lead-stalls OT-010 / D-007).
 #:
-#: A verdict is only as good as the population it was computed over, and the
-#: rule below used to record one without the other: it asserted that the logs
-#: it found all parsed, and "all of them" is true of one log and true of none
-#: that carry a command. A corpus that lost 77 of its 78 logs would have gone
-#: green here, and the committed witness log that renders the same sweep in
-#: `evidence/casting-5-corpus-lint.log` would have reproduced byte-identically
-#: while doing it. GI-006 -- "Run artefacts stay complete" -- is what makes
-#: that a defect rather than a tolerance.
+#: THE RULE D-166 WROTE, AND WHY THE NUMBER HAD TO GO. A verdict is only as
+#: good as the population it was computed over, and the rule below used to
+#: record one without the other: it asserted that the logs it found all parsed,
+#: and "all of them" is true of one log and true of none that carry a command.
+#: A corpus that lost 77 of its 78 logs would have gone green here, and the
+#: committed witness log rendering the same sweep would have reproduced
+#: byte-identically while doing it. GI-006 -- "Run artefacts stay complete" --
+#: is what makes that a defect rather than a tolerance. Every word of that
+#: still holds and is still enforced below.
 #:
-#: A RATCHET, not an equality: growth is the normal state of this corpus and
-#: pinning the exact count would turn every casting's new log into a failure
-#: here. It may be RAISED when someone wants a tighter floor. It is never
-#: lowered -- a corpus that shrank below it is the event this constant exists
-#: to report, and editing the number to make the report go away is the one
-#: response that is always wrong.
-_CORPUS_POPULATION_FLOOR = 78
+#: What D-166 could not know is that it wrote the floor as a REMEMBERED
+#: ABSOLUTE, `_CORPUS_POPULATION_FLOOR = 78`, on the premise that "growth is
+#: the normal state of this corpus". That premise is false, and not by
+#: accident: foundry's own F6 DONE step ends every run with
+#: `git rm -r evidence/`. ce5b416 did exactly that to all 78 logs, and the
+#: number outlived the corpus it was measured from -- so the next run's first
+#: evidence commit armed a rule that a three-casting run could not satisfy at
+#: any point in its life. The constant's own note said it may be raised and
+#: never lowered, and it was right: lowering 78 to 10 records nothing except
+#: that someone wanted green. But the third option it did not consider is the
+#: one this module preaches everywhere else -- DERIVE the membership rather
+#: than remember it. `test_every_declared_grammar_has_a_live_witness` reads its
+#: population off the registry "so a grammar added tomorrow is swept the day it
+#: lands rather than the day someone remembers to extend a list here"; the
+#: floor was the one rung that remembered, and remembering is precisely what
+#: rotted.
+#:
+#: SO THE BASELINE IS THE TREE'S OWN PREVIOUS STATE. The floor is now how many
+#: command-declaring logs the corpus held at the commit before this one. That
+#: is a strictly STRONGER rule than the absolute was, in the case the absolute
+#: existed for: losing 77 of 78 logs fails here whatever the absolute happened
+#: to be, and so does losing 1 of 78, which `>= 78` would have let through the
+#: moment someone raised the floor to a round number. And it is a rule the
+#: protocol can satisfy, because the same F6 strip that empties `evidence/`
+#: also empties the baseline -- a fresh run's first log is measured against the
+#: zero the strip commit records, and the ratchet then rebuilds within the run,
+#: commit by commit. A corpus that SHRANK and a partial corpus still being
+#: built stop being the same reading, which is the whole distinction D-007 was
+#: filed over.
+
+
+def _corpus_population_at(commit: str) -> int | None:
+    """How many logs directly under ``evidence/`` declared a command at ``commit``.
+
+    ``None`` when the question cannot be asked -- no git, or no such commit --
+    which the caller reports rather than treating as zero. Zero is a real
+    answer and means the corpus was empty there; not knowing is not.
+
+    One `git grep` rather than a blob read per log: the line-anchored pattern
+    is the same one the commit guard's awk rung uses
+    (`plugins/foundry/hooks/pre-commit-guard.sh`), so the baseline population
+    and the population the guard lints are counted by one spelling. It is a
+    hair looser than `_parse_evidence_header`, which additionally requires the
+    directive to sit in the LEADING block -- a body line beginning
+    `# evidence-cmd:` would be counted here and not there. That direction is
+    the safe one for a floor (it can only make the baseline stricter) and it is
+    named here rather than left for a reader to discover.
+    """
+    if shutil.which("git") is None:
+        return None
+    proc = subprocess.run(
+        ["git", "grep", "-l", "-E", r"^#[ \t]*evidence-cmd[ \t]*:", commit,
+         "--", "evidence/*.log"],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+    )
+    if proc.returncode == 1:
+        # git grep's "nothing matched" -- including the commit having no
+        # `evidence/` at all, which is what every post-strip commit looks like.
+        return 0
+    if proc.returncode != 0:
+        return None
+    paths = [
+        line.split(":", 1)[1]
+        for line in proc.stdout.splitlines()
+        if ":" in line
+    ]
+    return len(
+        [
+            path
+            for path in paths
+            if path.startswith("evidence/")
+            and path.endswith(".log")
+            and path.count("/") == 1
+        ]
+    )
 
 
 def test_every_committed_evidence_command_parses_under_the_host_shell():
@@ -6937,12 +7101,18 @@ def test_every_committed_evidence_command_parses_under_the_host_shell():
     Run on the host, so "both fleet hosts" is a property this suite re-decides
     wherever it runs rather than a claim about somebody else's machine.
 
-    And judged against `_CORPUS_POPULATION_FLOOR`, so the verdict names the
-    population it was computed over (fallout D-166). "Every log parsed" is a
-    claim about a set, and until the floor landed nothing here said how big
-    that set had to be -- so the rule could keep passing over a corpus that had
-    quietly collapsed to a single log, which is the one circumstance in which
-    its answer would be worthless.
+    And judged against a floor, so the verdict names the population it was
+    computed over (fallout D-166). "Every log parsed" is a claim about a set,
+    and until the floor landed nothing here said how big that set had to be --
+    so the rule could keep passing over a corpus that had quietly collapsed to
+    a single log, which is the one circumstance in which its answer would be
+    worthless.
+
+    lead-stalls OT-010 (D-007): the floor is DERIVED from the commit before
+    this one rather than remembered as a constant. See the block above for why
+    a remembered number cannot survive a protocol that deletes the corpus at
+    the end of every run, and why deriving it makes the rule stricter rather
+    than looser.
     """
     evidence_dir = REPO_ROOT / "evidence"
     if not evidence_dir.exists():
@@ -6968,18 +7138,114 @@ def test_every_committed_evidence_command_parses_under_the_host_shell():
         "no committed log declared a `# evidence-cmd:` — the header parse is "
         "reading nothing and this rule would pass over any corpus at all"
     )
-    assert len(checked) >= _CORPUS_POPULATION_FLOOR, (
+    baseline_commit = subprocess.run(
+        ["git", "rev-parse", "--verify", "--quiet", "HEAD^"],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    floor = _corpus_population_at(baseline_commit) if baseline_commit else None
+    assert floor is None or len(checked) >= floor, (
         f"the lint ran over {len(checked)} commands from {len(logs)} committed "
-        f"logs, below the floor of {_CORPUS_POPULATION_FLOOR}. Either the "
-        f"corpus SHRANK or logs stopped declaring a `# evidence-cmd:`; either "
-        f"way a green verdict over what is left says nothing about what was "
-        f"lost. Raise the floor only to tighten it — never lower it to restore "
-        f"green."
+        f"logs, below the {floor} the corpus carried at {baseline_commit[:12]}. "
+        f"Either the corpus SHRANK or logs stopped declaring a "
+        f"`# evidence-cmd:`; either way a green verdict over what is left says "
+        f"nothing about what was lost. The floor is the tree's own previous "
+        f"state and is not a number to edit: restore the logs, or if they were "
+        f"retired deliberately, retire them in a commit that says so."
     )
     assert failures == [], (
         f"committed evidence commands do not parse under "
         f"{evidence._EVIDENCE_SHELL} -n, so the boundary sweep will refuse "
         f"them at the next crossing: {failures}"
+    )
+
+
+def test_the_derived_floor_reads_a_real_population_and_reports_a_shrink(
+    tmp_path, monkeypatch
+):
+    """lead-stalls OT-010 (D-007): the plant, on a corpus that actually shrinks.
+
+    A floor that cannot fail is decoration, and the floor this replaces was a
+    literal -- nothing ever drove it, so nothing said whether the rule it fed
+    could report anything at all. A derived floor has a failure mode a literal
+    does not: it can fail OPEN. `_corpus_population_at` answers `0` for a
+    commit with no corpus, and `0` is also what a broken git invocation, a
+    mis-spelled pathspec or a swallowed error would produce -- at which point
+    `len(checked) >= floor` is true of every corpus including the empty one,
+    and the rule goes quiet in exactly the circumstance D-166 wrote it for.
+
+    So the three answers are driven separately over a synthesized repo, on the
+    three shapes the run lifecycle actually produces:
+
+      * a commit carrying a corpus reports its REAL size, not zero;
+      * the commit AFTER a deletion reports the smaller number, and the
+        baseline it is judged against is the larger one -- which is the shrink
+        arriving as `population_now < floor`, the reading the whole rule turns
+        on;
+      * a commit with no `evidence/` at all reports `0` rather than `None`,
+        because that is what every post-strip commit looks like and a fresh
+        run's first log has to be measurable against it.
+    """
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    subprocess.run(["git", "init", "-q", str(repo)], check=True)
+    subprocess.run(["git", "-C", str(repo), "config", "user.email", "t@t"], check=True)
+    subprocess.run(["git", "-C", str(repo), "config", "user.name", "t"], check=True)
+
+    def _commit(message):
+        subprocess.run(["git", "-C", str(repo), "add", "-A"], check=True)
+        subprocess.run(
+            ["git", "-C", str(repo), "commit", "-q", "-m", message], check=True
+        )
+        return subprocess.run(
+            ["git", "-C", str(repo), "rev-parse", "HEAD"],
+            capture_output=True, text=True, check=True,
+        ).stdout.strip()
+
+    # The post-strip shape: a commit with no `evidence/` whatsoever.
+    (repo / "README.md").write_text("x\n", encoding="utf-8")
+    stripped = _commit("no corpus here")
+
+    corpus = repo / "evidence"
+    corpus.mkdir()
+    for name in ("casting-1-a.log", "casting-1-b.log", "casting-2-c.log"):
+        (corpus / name).write_text(
+            "# evidence-cmd: true\n\nok\n", encoding="utf-8"
+        )
+    # A log that declares NO command is not part of the population either rung
+    # counts, so it must not inflate the baseline.
+    (corpus / "casting-3-headerless.log").write_text("ok\n", encoding="utf-8")
+    full = _commit("three declaring logs and one that does not")
+
+    (corpus / "casting-1-b.log").unlink()
+    (corpus / "casting-2-c.log").unlink()
+    shrunk = _commit("two logs lost")
+
+    monkeypatch.setattr(sys.modules[__name__], "REPO_ROOT", repo)
+
+    assert _corpus_population_at(stripped) == 0, (
+        "a commit with no evidence/ must read as an empty corpus, not as "
+        "unknown — every commit after an F6 strip has this shape, and a fresh "
+        "run's first log is measured against it"
+    )
+    assert _corpus_population_at(full) == 3, (
+        "the baseline did not read the real population; a floor that answers "
+        "0 for a corpus that is there fails open, and the rule it feeds goes "
+        "quiet on the day a corpus disappears"
+    )
+    assert _corpus_population_at(shrunk) == 1, (
+        "the population after a deletion was not read from the tree"
+    )
+    assert _corpus_population_at(shrunk) < _corpus_population_at(full), (
+        "a corpus that lost two of its three declaring logs did not read as "
+        "smaller than the commit before it, so `len(checked) >= floor` could "
+        "never report the shrink"
+    )
+    assert _corpus_population_at("0" * 40) is None, (
+        "a commit that cannot be read must be UNKNOWN, not zero: zero is a "
+        "floor every corpus clears, so answering it for an unanswerable "
+        "question is the fail-open this rule cannot afford"
     )
 
 

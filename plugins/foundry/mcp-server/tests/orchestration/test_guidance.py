@@ -590,6 +590,9 @@ def test_a_halted_run_issues_no_dispatch(run_env):
         halted_at_cycle=2, halted_reason="--max-cycles 2 reached",
     )
     _defect_ledger(fdir, [_tiered("D-001", "LIVE")])
+    # The halt wrote its report; one it could not write is served as the one
+    # step `Foundry-Report` (test_gates.py, lead-stalls GI-008 / FR-007).
+    (fdir / "REPORT.md").write_text("# report\n", encoding="utf-8")
 
     nxt = foundry_next_action(project_root)
 
@@ -997,8 +1000,12 @@ def test_the_f1_imperative_names_the_tool_that_enters_f2(run_env):
     action = _compute_next_action(project_root)
 
     assert action["action"] == "transition_to_inspect"
-    assert "Foundry-Phase(phase='cast')" in action["instructions"]
-    assert "update state to F2" not in action["instructions"]
+    # lead-stalls D-051..D-053 — the tool is named by the step list the lead is
+    # served, and the CONTEXT beside it names no call of its own.
+    served = foundry_next_action(project_root)["instructions"]
+    assert "(2) Foundry-Phase(phase='cast')" in served, served
+    assert "Foundry-Phase(" not in action["instructions"], action["instructions"]
+    assert "update state to F2" not in served
 
 
 
@@ -1156,7 +1163,9 @@ def test_the_rules_block_and_the_gate_note_are_the_same_string(run_env):
         if line.startswith("- NEVER stop between phases")
     )
     assert "OPTIONAL" in rule_line
-    assert "REQUIRED everywhere except exactly one place" in rule_line
+    # lead-stalls D-044 / D-045 — the exception is now the one read a served
+    # list tolerates, stated beside the one-move sentence it qualifies.
+    assert "The one Foundry-Next a list tolerates between two of its steps" in rule_line
     assert not rule_line.endswith("Call Foundry-Next after each step and follow it.")
 
 
@@ -1307,7 +1316,7 @@ def test_the_halted_notice_renders_the_reason_as_prose_not_a_dict(run_env):
     assert nxt["details"]["halted_reason"] == "lead_ruling: the lead stopped it", nxt
     assert "lead_ruling: the lead stopped it" in nxt["instructions"], nxt["instructions"]
     # ...and the cycle beside it is the recorded number, not "?".
-    assert "Run HALTED at cycle 2" in nxt["instructions"], nxt["instructions"]
+    assert "This run HALTED at cycle 2" in nxt["instructions"], nxt["instructions"]
     assert nxt["details"]["halted_at_cycle"] == 2, nxt["details"]
 
 
@@ -2256,8 +2265,17 @@ def test_the_run_streams_imperative_leaves_sight_an_exit(run_env):
     assert "Every OTHER stream records its own and you only confirm." in imperative
 
     # The re-dispatch remedy is scoped to the streams that HAVE an agent, so it
-    # no longer names a move SIGHT cannot make.
-    assert "If an AGENT stream finished and no record exists" in imperative, imperative
+    # no longer names a move SIGHT cannot make. lead-stalls GI-008 (D-033): and
+    # it is stated as the one move, not as "if ... re-dispatch it, or file it"
+    # — a filed stream still has no record, so filing never advances the run.
+    # lead-stalls D-040: the move is now the step list itself, one Agent call
+    # per unrecorded stream, and the sentence says the finished one is in it.
+    assert (
+        "A stream that finished without its own record is in that list, "
+        "because its own re-run is the one thing that records it." in imperative
+    ), imperative
+    assert "Each Agent step above is a stream this INSPECT's recorded roster" in imperative
+    assert "or file it" not in imperative, imperative
 
     # The same qualification reaches the `instructions` string, which is the
     # surface a lead reads FIRST and which stated the rule unqualified too.

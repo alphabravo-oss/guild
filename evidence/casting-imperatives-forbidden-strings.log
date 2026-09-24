@@ -1,0 +1,5 @@
+# evidence-cmd: cd plugins/foundry/mcp-server/src && printf "forbids-the-guidance-call: %s\n" "$(grep -roE "Do NOT call Foundry-Nex[t]" . | wc -l | tr -d " ")" && printf "instructs-a-poll: %s\n" "$(grep -roE "wait and call Foundry-Next agai[n]|otherwise wait and call|poll until|sleep for" . | wc -l | tr -d " ")"
+# evidence-for: FR-001, FR-006, OT-001, OT-003, GI-004
+
+forbids-the-guidance-call: 0
+instructs-a-poll: 0

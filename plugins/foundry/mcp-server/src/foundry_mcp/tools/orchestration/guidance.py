@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import NamedTuple
 
 from datetime import (
     datetime,
@@ -37,6 +38,16 @@ from foundry_mcp.tools.artifacts import (
     _read_text,
     _spec_requirement_ids,
     _stream_marker,
+    # lead-stalls GI-008 / FR-007 (D-083) — the nyquist escalation reading
+    # lives in the leaf, because the DONE seal in `gates.py` reads it too and
+    # the two layers may not reach each other. See the block above
+    # `artifacts.py#unfiled_nyquist_escalations`.
+    _NYQUIST_BATCH_SIZE,
+    _carried_requirements,
+    _grind_cycle,
+    _nyquist_batches,
+    _nyquist_result_name,
+    unfiled_nyquist_escalations,
 )
 # fallout research/holmes-orchestrator.md#coh-8 (D-014) / GI-024 — THE PALETTE
 # AND THE PHASE VOCABULARY ARE READ, NOT DECLARED.
@@ -71,28 +82,39 @@ from foundry_mcp.tools.foundry_state import (
     get_run_dir,
     now_iso,
     read_document,
+    read_jsonl,
 )
 from pathlib import Path
 from foundry_mcp.tools.orchestration.escalation import (
     ESCALATION_CYCLES,
-    ESCALATION_FILENAME,
     _escalated_classes,
     _escalation_exit_distances,
+    _override_instruction,
     _override_offer,
     _override_report,
-    _persisted_escalations,
+    _still_escalated_classes,
 )
 from foundry_mcp.tools.orchestration.streams import (
     _check_streams_complete,
     _prove_is_clean,
 )
 from foundry_mcp.tools.orchestration.teams import (
+    SERVED_LIST_IS_ONE_MOVE,
     _check_active_teams,
     agent_model,
 )
 from foundry_mcp.tools.orchestration.spend import _spend_summary
 
-from foundry_mcp.tools.orchestration.directives import _read_directives
+from foundry_mcp.tools.orchestration.directives import (
+    _casting_files,
+    _casting_requirement_ids,
+    _dispatch_file_path,
+    _owning_casting,
+    _project_root_of,
+    _read_directives,
+    _spec_ref_requirement_ids,
+)
+from foundry_mcp.tools.orchestration.keyfiles import manifest_spelling
 
 
 
@@ -243,13 +265,8 @@ def _nyquist_transition(from_phase: str) -> dict:
         "phase": from_phase,
         "action": "transition_to_nyquist",
         "instructions": (
-            "--nyquist is set. Call Foundry-Gate(phase='nyquist'), then "
-            "Foundry-Phase(phase='nyquist') to enter F5.5. Batch VERIFIED "
-            "requirements by 5 and spawn one foundry:nyquist-auditor agent per "
-            "batch. Each classifies COVERED / UNTESTED / UNDERTESTED, generates "
-            "minimal behavioral tests, runs them, and commits the passing ones. "
-            "Any ESCALATE_IMPL_BUG result starts a new GRIND cycle. Never mark "
-            "an untested requirement as passing."
+            "--nyquist is set, so the run enters F5.5 (NYQUIST): regression "
+            "tests for VERIFIED requirements that lack automated coverage."
         ),
         "details": {
             "agent_config": {
@@ -258,6 +275,343 @@ def _nyquist_transition(from_phase: str) -> dict:
             },
             "batch_size": 5,
         },
+    }
+
+
+#: lead-stalls GI-008 / FR-007 (D-061) — the fact a capped GRIND crossing's
+#: CONTEXT states. It names no call: the list above it ends at the sealing
+#: transition, and that is the whole of what the lead is served.
+_GRIND_SEALS_AT_CAP = (
+    " The run is at its --max-cycles cap, so `grind_start` seals it HALTED "
+    "with this work open, and no GRIND teammate is dispatched into a sealed run."
+)
+
+
+def _grind_start_seals(fdir: Path) -> bool:
+    """Whether `grind_start` from this run state seals the run HALTED.
+
+    lead-stalls GI-008 / FR-007 (D-061) — the `would_halt` arithmetic of
+    `transitions._grind_start_preconditions` (``opening > max_cycles``, with
+    ``opening`` one past the current cycle), which is `_terminal_outlook`'s
+    ``cycles_to_cap == 0`` on a capped run. `transition_to_grind` served its
+    teammate dispatch AFTER that transition, so at the cap a lead following
+    the list registered a team on the HALTED run and spawned a GRIND teammate
+    into it, and the halted arm, answered before `cleanup_teams`, never served
+    a teardown. The router publishes this as ``details["seals_halted"]`` and
+    the dispatch slot ends the list at the sealing call. Total: an unbounded
+    run (max_cycles 0) never seals here.
+    """
+    max_cycles = persisted_max_cycles(_load_json(fdir / "state.json"))
+    return max_cycles > 0 and current_cycle(fdir) >= max_cycles
+
+
+def _shared_depth(path: str, key_files: list[str]) -> int:
+    """How many leading path segments ``path`` shares with the nearest of
+    ``key_files`` — the directory-neighbour half of `_grind_carriers`' route."""
+    segments = [part for part in path.split("/") if part]
+    best = 0
+    for entry in key_files:
+        shared = 0
+        for mine, theirs in zip(
+            segments, [p for p in manifest_spelling(entry).split("/") if p]
+        ):
+            if mine != theirs:
+                break
+            shared += 1
+        best = max(best, shared)
+    return best
+
+
+def _grind_carriers(fdir: Path, filing: object = None) -> list[dict] | None:
+    """Which casting carries each open BLOCKING defect, in manifest order, or
+    ``None`` when the manifest names no casting.
+
+    ``[{"casting": id, "defects": [ids], "routed": [{"defect", "file"}]}]``.
+    ``filing`` is the `unfiled_escalations` list `transition_to_grind` files
+    in its first step, each carried under the requirement it is filed for.
+
+    lead-stalls GI-008 / FR-007 / ST-003 (D-089) — THE DISPATCH NAMES WHO IT
+    REACHES. The GRIND spawn step said "for each casting carrying open
+    defects", and a defect whose file is in no casting's `key_files` is
+    carried by none: Foundry-Tasks returns its task with a null
+    `owning_casting`, so the step spawned nobody and the list's last step
+    still said END YOUR TURN, with no agent running — lead-stalls ST-003's
+    park. The next Foundry-Next answered `cleanup_teams`, then the same list,
+    forever. The way out was a lead ruling on adjacency (commands/start.md),
+    which no served step named: lead-stalls FR-007's judgment task. This run
+    reached it five times.
+
+    So the server makes the route and says so. A defect a casting owns
+    (`_owning_casting`, the lookup Foundry-Tasks uses) goes to that casting.
+    One nobody owns goes to the casting whose `key_files` share the most
+    leading directories with its file, then the most of the requirements it
+    was filed under, then the first in manifest order — total, so every
+    blocking defect has a carrier whenever the manifest has a casting. The
+    route is per FILE, so two defects on one unowned file never go to two
+    teammates editing it at once. `routed` names each one, and the spawn step
+    prints it, so the lead passes the defect to the teammate it was routed to
+    rather than deciding where it goes.
+    """
+    owned = _casting_files(fdir)
+    if not owned:
+        return None
+    requirements = _casting_requirement_ids(fdir)[0]
+    root = _project_root_of(fdir)
+    buckets = open_defects_by_tier(
+        fdir, tiers=DEFECT_TIERS, unknown_tier=TIER_UNKNOWN, tier_of=defect_tier
+    )
+    rows = [
+        (str(record.get("id", "?")), record.get("file"), [record.get("spec_ref")])
+        for tier in BLOCKING_TIERS for record in buckets.get(tier, [])
+    ]
+    rows += [
+        (f"the defect filed for {rid}", "", [rid])
+        for rid in (filing if isinstance(filing, (list, tuple)) else ())
+        if isinstance(rid, str) and rid
+    ]
+    carried: dict = {}
+    routed_by_file: dict[str, object] = {}
+    for label, file, refs in rows:
+        path = _dispatch_file_path(file, root)
+        owner = _owning_casting(fdir, [path]) if path else None
+        routed = owner is None
+        if routed:
+            owner = routed_by_file.get(path)
+        if owner is None:
+            wanted = _spec_ref_requirement_ids(refs)
+            owner = max(owned, key=lambda cid: (
+                _shared_depth(path, owned[cid]),
+                len(wanted & requirements.get(cid, set())),
+            ))
+            if path:
+                routed_by_file[path] = owner
+        row = carried.setdefault(
+            owner, {"casting": owner, "defects": [], "routed": []}
+        )
+        row["defects"].append(label)
+        if routed:
+            row["routed"].append({"defect": label, "file": path})
+    return [carried[cid] for cid in owned if cid in carried]
+
+
+def _blocking_grind_crossing(
+    phase: str, name: str, blocking: dict, grind_config: dict, fdir: Path,
+) -> dict | None:
+    """The GRIND crossing a blocking defect owes past ASSAY, or ``None`` while
+    nothing blocks.
+
+    lead-stalls GI-008 / FR-007 (D-058) — ONE BODY, ASKED BY F4 AS WELL AS BY
+    F5 AND F5.5. This was the first half of `_post_assay_crossing`, which only
+    F5 and F5.5 call. The F4 arm, with every requirement VERIFIED and no class
+    held, served the crossing its flags named without reading the blocking
+    count, and every gate on that road refused the open defect. So a
+    RESEARCH_DEVIATION an assayer filed, or a DEFECT observation adjudicated
+    to GRIND, got the same refused list on every lap. ``blocking`` is the
+    router's one `_open_by_blocking_tier` reading.
+
+    lead-stalls D-061 — ``fdir`` answers whether `grind_start` seals the run
+    at its cap (`_grind_start_seals`); the served list then ends there.
+    """
+    if blocking["blocking"] > 0:
+        seals = _grind_start_seals(fdir)
+        return {
+            "phase": phase,
+            "action": "transition_to_grind",
+            "instructions": (
+                f"{name} left {blocking['blocking']} blocking defect(s) open "
+                f"({len(blocking['live'])} LIVE, "
+                f"{len(blocking['unknown'])} untiered)."
+                + (
+                    _GRIND_SEALS_AT_CAP if seals else
+                    " GRIND fixes them, and the run comes back through "
+                    "INSPECT and ASSAY."
+                )
+            ),
+            "details": {
+                "open_defects": blocking["blocking"],
+                "live_defects": blocking["live"],
+                "unknown_tier_defects": blocking["unknown"],
+                "latent_backlog": blocking["latent"],
+                "agent_config": grind_config,
+                "seals_halted": seals,
+            },
+        }
+    return None
+
+
+def _short_ledger_assay(
+    fdir: Path, project_root: str, state: dict, phase: str,
+) -> dict | None:
+    """The ASSAY dispatch a SHORT verdict ledger owes, or ``None``.
+
+    lead-stalls GI-008 / FR-007 (D-060, D-062) — ONE BODY, ASKED BY F4, F5 AND
+    F5.5, for `_blocking_grind_crossing`'s reason.
+
+    D-060 gave this rung to the F4 arm alone. Past F4 the same ledger was
+    still reachable — `transitions._temper_preconditions` and
+    `_nyquist_preconditions` had no coverage comparison, so a short-and-clean
+    ledger entered F5 or F5.5 — and once in, `run_temper` / `run_nyquist` were
+    re-served every lap behind a DONE gate refusing "Only N verdicts but spec
+    has M requirements", with the exit named only inside that refusal's hint.
+    Driven at a4ded25, three laps at each of F5 and F5.5, the phase never
+    moved. Both doors now carry the rung (D-062) so the state cannot be
+    ENTERED; this is what a run ALREADY standing in one is served, which is
+    the other half — a door that refuses says nothing to a run already past
+    it.
+
+    Asked BEFORE the phase's own work and before its crossing, because ASSAY's
+    unfinished list is what is owed however far the run has walked, and after
+    `_escalation_hold` for the reason the F4 arm gives: the hold's road back is
+    shortest.
+
+    The count is `gates.py#_done_preconditions`' own comparison, over the ids
+    `artifacts._spec_requirement_ids` declares — the one climb, so the router
+    and the gate cannot disagree about how many requirements the spec has.
+    """
+    verdicts = _load_json(fdir / "verdicts.json")
+    requirements = verdicts.get("requirements", [])
+    declared = _spec_requirement_ids(project_root, fdir, state)[1]
+    if len(requirements) >= len(declared):
+        return None
+    recorded = {str(r.get("id")) for r in requirements}
+    unrecorded = sorted(declared - recorded)
+    non_verified = sum(
+        1 for r in requirements if r.get("verdict") != "VERIFIED"
+    )
+    return {
+        "phase": phase,
+        "action": "run_assay",
+        "instructions": (
+            f"ASSAY has NOT finished: verdicts.json records "
+            f"{len(requirements)} verdicts and the spec declares "
+            f"{len(declared)} requirements, so {len(unrecorded)} are "
+            f"unrecorded ({', '.join(unrecorded)}). "
+            + (
+                f"{non_verified} recorded verdict(s) are not VERIFIED."
+                if non_verified else "Every recorded verdict is VERIFIED."
+            )
+            + " Each assayer records its verdicts through the "
+            "Foundry-Verdict door, and the DONE gate refuses a ledger that "
+            "covers fewer requirements than the spec declares"
+            # Said only where it is news. At F4 the lead has not crossed
+            # anything yet; past it, the sentence answers the question this
+            # phase raises — why a run standing in F5 is being sent back.
+            + ("." if phase == "F4" else f" — from {phase} as surely as from F4.")
+        ),
+        # No `agent_config`: `foundry:assayer` holds its own opus /
+        # effort=max frontmatter pin, the reason the empty-ledger arm gives.
+        "details": {
+            "non_verified": non_verified,
+            "total": len(requirements),
+            "spec_requirements": len(declared),
+            "unrecorded_requirements": unrecorded,
+        },
+    }
+
+
+def _nyquist_escalation_crossing(
+    fdir: Path, blocking: dict, grind_config: dict,
+) -> dict | None:
+    """The GRIND crossing an unfiled NYQUIST escalation owes, or ``None``.
+
+    lead-stalls GI-008 / FR-007 (D-081). The requirements this cycle's
+    auditors escalated as ESCALATE_IMPL_BUG (`_nyquist_escalations`, over the
+    result files `_nyquist_dispatch` names) that no open BLOCKING defect
+    carries (`_carried_requirements`, the reading the ASSAY-rejection arm
+    files by) are published as ``unfiled_escalations``, and
+    `transition_to_grind`'s first step files them. The rest of the payload is
+    `_blocking_grind_crossing`'s, with the filing counted into the blocking
+    count the dispatch slot reads, because by the dispatch those records are
+    open. Once filed they are carried, and the crossing is
+    `_post_assay_crossing`'s ordinary one.
+
+    lead-stalls D-083 — the list is `unfiled_nyquist_escalations`, the leaf's
+    one answer, and `gates.py#_done_preconditions` refuses DONE on the same
+    call. Before that the DONE seal read no result file, so a lead calling the
+    F6 doors off this list sealed the run over the escalation this list files.
+    """
+    unfiled = unfiled_nyquist_escalations(fdir)
+    if not unfiled:
+        return None
+    seals = _grind_start_seals(fdir)
+    return {
+        "phase": "F5.5",
+        "action": "transition_to_grind",
+        "instructions": (
+            f"NYQUIST escalated {len(unfiled)} requirement(s) as "
+            f"ESCALATE_IMPL_BUG ({', '.join(unfiled)}) in this cycle's "
+            "result files, and no open blocking defect carries them, so the "
+            "list above opens by filing them."
+            + (
+                _GRIND_SEALS_AT_CAP if seals else
+                " GRIND fixes them, and the run comes back through INSPECT "
+                "and ASSAY."
+            )
+        ),
+        "details": {
+            "open_defects": blocking["blocking"] + len(unfiled),
+            "live_defects": blocking["live"],
+            "unknown_tier_defects": blocking["unknown"],
+            "latent_backlog": blocking["latent"],
+            "unfiled_escalations": unfiled,
+            "agent_config": grind_config,
+            "seals_halted": seals,
+        },
+    }
+
+
+def _post_assay_crossing(
+    fdir: Path, phase: str, name: str, gate: str, grind_config: dict,
+) -> dict | None:
+    """The crossing out of F5 or F5.5, or ``None`` while the phase's own list
+    (`run_temper` / `run_nyquist`) is still owed.
+
+    lead-stalls GI-008 / FR-007 (D-050) — both arms returned their phase's
+    work unconditionally and left the exit in the CONTEXT ("When clean, call
+    Foundry-Gate(phase='done'), update to F6."), so the Foundry-Next owed after
+    that list re-served the same list and no run with --temper or --nyquist
+    reached F6 by following the served steps.
+
+    WHAT SAYS THE WORK IS FINISHED. Each phase's list ends in ``gate``, the
+    gate out of the phase, and a passing evaluation records it in
+    `.gate-passed`, which every transition unlinks — so a record naming
+    ``gate`` was written by the server in THIS phase, after the list's work.
+    The ledgers cannot say it: a TEMPER pass that filed nothing leaves them
+    exactly as ASSAY did, `temper` is not a stream wire id, and F5's recorded
+    INSPECT roster names five streams no F5 list dispatches. Blocking defects
+    are read FIRST, because a gate that passed before TEMPER filed does not
+    make what it filed go away.
+
+    The crossings are the existing lists, never a restatement: GRIND is
+    `transition_to_grind` (`grind_start` has no source-phase rung, and the
+    F5 / F5.5 hints in `transitions.py` name it), F5.5 is `_nyquist_transition`,
+    and F6 is `transition_to_done`, whose `done` token is accepted from F5 on a
+    --temper run and from F5.5 on a --nyquist one. D-048's advance notice then
+    points past the gate the record names. The CONTEXT names no sequence.
+    ``grind_config`` is the router's `GRIND_AGENT_CONFIG`, a local of
+    `_compute_next_action`, passed so the two GRIND crossings carry one config.
+    The GRIND half is `_blocking_grind_crossing`, which F4 asks too (D-058).
+    """
+    grind = _blocking_grind_crossing(
+        phase, name, _open_by_blocking_tier(fdir), grind_config, fdir,
+    )
+    if grind is not None:
+        return grind
+    marker = fdir / GATE_PASSED_MARKER
+    passed = read_document(marker)[0].get("phase") if marker.exists() else None
+    if passed != gate:
+        return None
+    finished = (
+        f"{name} is finished: the gate out of {phase}, `{gate}`, passed in "
+        f"{phase} and no blocking defect is open."
+    )
+    if gate == "nyquist":
+        return {**_nyquist_transition(phase), "instructions": finished}
+    return {
+        "phase": phase,
+        "action": "transition_to_done",
+        "instructions": finished,
+        "details": {},
     }
 
 
@@ -597,12 +951,47 @@ def foundry_next_action(
                         "passed_gate": expected_gate,
                         "action": result.get("action", ""),
                     }
-                    gate_advance_note = (
-                        f"✅ Foundry-Gate(phase='{expected_gate}') ALREADY "
-                        f"PASSED — do NOT re-run it. Proceed directly to the "
-                        f"transition step (Foundry-Phase / state update) in the "
-                        f"imperative below."
-                    )
+                    # Rendered below, once the steps it points into exist.
+                    gate_advance_note = expected_gate
+
+    # lead-stalls FR-005 / FR-015 / CT-003 / CT-006 — THE ROSTER IS READ
+    # ONCE, FOR
+    # THE TWO ACTIONS WHOSE IMPERATIVE DEPENDS ON IT.
+    #
+    # Until now `_waiting_on_agents` was consulted ONLY inside the stall
+    # watchdog below, which fires only past `STALL_NOTICE_SECONDS` — so for the
+    # first three minutes of every wave the server held the answer to "are my
+    # teammates running" and never asked itself. lead-stalls FR-005's complaint
+    # is what that
+    # made `Foundry-Next` worth: a lead that re-called it during a wave got the
+    # same frozen conditional back and learned nothing, which is a no-op dressed
+    # as guidance.
+    #
+    # Read HERE and passed BOTH ways: down to `_format_imperative_header`, which
+    # picks the arm, and into the watchdog, which would otherwise take a second
+    # reading of the same roster and could disagree with the one the lead was
+    # just given. Published under its own key rather than folded into
+    # `waiting_on_agents`, which means something narrower and older — "the
+    # watchdog fired and found agents progressing" — and whose ABSENCE four
+    # tests read as "no stall notice was emitted".
+    #
+    # Scoped to the BRANCHED actions (lead-stalls D-019 made `run_streams` the
+    # third, D-056 `add_castings` the fourth) and to the phases the router
+    # itself now reads it for, so the rest cost no ledger scan (lead-stalls
+    # GI-001). `_waiting_on_agents` never
+    # raises and never blocks (lead-stalls CT-006), so this cannot take
+    # `Foundry-Next` down with it.
+    #
+    # lead-stalls D-015 / D-016 / D-017 — AND WHEN THE ROUTER ALREADY READ IT,
+    # THAT READING IS THE ONE. `_compute_next_action` now reads the roster in
+    # F1 and F3 to decide whether a registered team is still holding work, and
+    # a second reading here could disagree with the one that chose the arm.
+    agent_liveness: dict | None = result.get("agent_liveness")
+    if agent_liveness is None and _parse_branches(
+        _ACTION_IMPERATIVES.get(result.get("action", ""), "")
+    ):
+        agent_liveness = _waiting_on_agents(project_root)
+        result["agent_liveness"] = agent_liveness
 
     # Stall watchdog. Read the previous `.last-next-at` timestamp BEFORE
     # overwriting it, compute the delta, and if the gap is large surface a
@@ -647,19 +1036,61 @@ def foundry_next_action(
                     # notice never asserts deliberation while an agent is
                     # progressing. Only when nothing is running is the silence
                     # the lead's own. It never blocks either way (CT-012).
-                    liveness = _waiting_on_agents(project_root)
+                    # lead-stalls FR-005 — the reading taken above when this
+                    # action has one, so the notice and the imperative
+                    # printed beside it can never be two different answers
+                    # about one roster.
+                    liveness = (
+                        agent_liveness if agent_liveness is not None
+                        else _waiting_on_agents(project_root)
+                    )
                     minutes = int(delta // 60)
                     seconds = int(delta % 60)
                     if liveness["waiting"]:
                         result["waiting_on_agents"] = liveness
+                        # lead-stalls FR-006 / GI-004 / OT-003 — THE TAIL
+                        # THAT TOLD THE LEAD TO WAIT AND THEN RE-ISSUE THE
+                        # GUIDANCE CALL IS A POLL, AND IT CONTRADICTED THE
+                        # IMPERATIVE PRINTED BELOW IT IN THE SAME PAYLOAD.
+                        #
+                        # One `Foundry-Next` response carried both that line
+                        # and a `build_castings` arm forbidding the very
+                        # same call while waiting, on the grounds that it
+                        # would re-emit the action. FR-006 requires the two
+                        # be reconciled and GI-004 decides the direction: no
+                        # surviving text instructs a sleep, a poll or a wait
+                        # loop, so this arm yields and QUOTES the one
+                        # spelling of the policy rather than wording it a
+                        # third time.
+                        #
+                        # lead-stalls GI-008 (D-019) — AND IT SAYS SO ONLY
+                        # WHEN THE IMPERATIVE BELOW SAYS THE SAME. This arm
+                        # appended the policy for EVERY action, and only the
+                        # branched ones choose their imperative from this
+                        # reading: driven with a team registered it printed
+                        # "END YOUR TURN" directly above `cleanup_teams`, and
+                        # at F2 above "spawn every missing INSPECT stream" —
+                        # one payload, two imperatives. The notice now asks
+                        # `_chosen_branch`, the selection the header is
+                        # printed from; anywhere else it REPORTS the roster
+                        # and names no move, so the header stays the one.
+                        told_to_wait = (
+                            _chosen_branch(result.get("action", ""), liveness)
+                            == "live"
+                        )
                         stall_warning = (
                             f"\u23f3 WAITING ON {liveness['count']} AGENT(S) "
                             f"({liveness['detail']}). {minutes}m {seconds}s since "
                             f"your last Foundry-Next call — that gap is the "
-                            f"agents working, not you deliberating. Do NOT "
-                            f"improvise over their half-finished work. Call "
-                            f"Foundry-Liveness for per-agent detail, otherwise "
-                            f"wait and call Foundry-Next again."
+                            f"agents working, not you deliberating. "
+                            + (
+                                "Do NOT improvise over their half-finished "
+                                "work. Foundry-Liveness answers per-agent "
+                                "detail. " + _WAITING_IS_NOT_STOPPING
+                                if told_to_wait
+                                else "Foundry-Liveness answers per-agent "
+                                "detail. " + _WAITING_REPORTS_ONLY
+                            )
                         )
                     else:
                         stall_warning = (
@@ -681,15 +1112,51 @@ def foundry_next_action(
     action = result.get("action", "")
     original_instructions = result.get("instructions", "")
     run_name_for_imperative = fdir_stall.name if fdir_stall and fdir_stall.exists() else ""
-    imperative_header = _format_imperative_header(
-        action, original_instructions, result.get("details", {}),
+    # lead-stalls GI-008 / FR-007 / ST-003 (D-089) — who the GRIND dispatch
+    # reaches, read here for both actions that serve it rather than at each of
+    # the router arms that return them, so no arm can serve the dispatch
+    # without it. Published on `details`, the surface the slot expands from.
+    details_out = result.get("details")
+    if (
+        action in _GRIND_DISPATCH_ACTIONS and isinstance(details_out, dict)
+        and fdir_stall and fdir_stall.exists()
+    ):
+        carriers = _grind_carriers(
+            fdir_stall, details_out.get("unfiled_escalations")
+        )
+        if carriers is not None:
+            details_out["grind_carriers"] = carriers
+    next_calls, imperative_header = _emitted_imperative(
+        action, result.get("details", {}),
         run_name=run_name_for_imperative,
         # fallout D-058 — the phase the action was emitted FROM, which is the
         # other half of the question for `transition_to_inspect`. It is already
         # on the result, so this reads the router's own answer rather than
         # re-deriving one that could disagree with it.
         phase=str(result.get("phase", "")),
+        # lead-stalls FR-015 / CT-008 — the roster reading taken once above.
+        # PASSED,
+        # never re-measured here: the arm the lead is given and the
+        # `agent_liveness` it can read on the same payload have to be one
+        # answer, and two readings of a moving roster are not.
+        liveness=agent_liveness,
+        # lead-stalls D-012 — the server-owned cycle counter, read the same way
+        # and at the same place as the run slug beside it. `current_cycle` is
+        # total and never raises, so this cannot take Foundry-Next down and
+        # cannot hand an entry an unresolvable `{cycle}`.
+        cycle=(
+            current_cycle(fdir_stall)
+            if fdir_stall and fdir_stall.exists() else None
+        ),
     )
+
+    # lead-stalls GI-008 / OT-013 (D-038..D-043) — THE STEPS THE HEADER WAS
+    # RENDERED FROM, published beside it. `None` only where the header is the
+    # generic fallback, which names no step list of its own.
+    if next_calls is not None:
+        result["next_calls"] = [_call_record(step) for step in next_calls]
+    if gate_advance_note:
+        gate_advance_note = _gate_advance_notice(gate_advance_note, next_calls)
 
     directives = _read_directives(project_root)
     directive_block = ""
@@ -760,6 +1227,9 @@ def foundry_next_action(
         # configured --max-cycles." and was emitted for `lead_ruling`,
         # `spec_change_required` and `user_stop` alike; see
         # `_HALT_CAUSE_SENTENCES` for the drive.
+        report_owed = (
+            (result.get("details") or {}).get("report_generated") is False
+        )
         critical_rules = (
             "\n\nCRITICAL RULES \u2014 THIS RUN IS HALTED:"
             "\n- The run stopped because "
@@ -777,22 +1247,38 @@ def foundry_next_action(
             # and the halt seal are among the very few surfaces its records
             # reach the lead at all. Derived from the vocabulary, so a fourth
             # tier cannot be dropped the same way.
-            "\n- The report has been generated as part of the halt and names "
-            "every open " + ", ".join(sorted(DEFECT_TIERS)) + " and untiered "
-            "defect. Read it."
+            #
+            # lead-stalls GI-008 / FR-007 — and only when it WAS. A halt that
+            # could not write its report is served `Foundry-Report` as its one
+            # step (`_UNWRITTEN_REPORT`); this line asserted the report beside
+            # that step, and the tail below said nothing asked the lead on.
+            + (
+                "\n- The halt could not write its report, which names every "
+                "open " + ", ".join(sorted(DEFECT_TIERS)) + " and untiered "
+                "defect once it exists, so the list below holds the one call "
+                "that writes it. " + SERVED_LIST_IS_ONE_MOVE
+                if report_owed else
+                "\n- The report has been generated as part of the halt and "
+                "names every open " + ", ".join(sorted(DEFECT_TIERS))
+                + " and untiered defect. Read it."
+            )
             # fallout US-006 (D-147): the cap RAISE is a remedy for exactly one
             # of the four endings. Offering it on a `spec_change_required` halt
             # tells the lead to re-run the work the ruling just said is not
             # useful until the spec moves — the cause claim above, said as
             # advice.
-            "\n- Hand the remaining work to a new run"
+            + "\n- Hand the remaining work to a new run"
             + (
                 ", or re-run with a higher --max-cycles"
                 if (result.get("details") or {}).get("halted_reason_member")
                 == "cap_reached"
                 else ""
             )
-            + ". Nothing below asks you to keep going."
+            + (
+                ". Nothing below asks you to go past that one call."
+                if report_owed else
+                ". Nothing below asks you to keep going."
+            )
         )
     else:
         critical_rules = _STANDING_CRITICAL_RULES
@@ -989,18 +1475,178 @@ def foundry_next_action(
 # fired") because commands/start.md calls it the INSPECT "mode" while the
 # imperatives called it the "width and rule", and a lead reading the two
 # surfaces had to work out they meant the same field.
+#
+# lead-stalls D-044 / D-045 — IT IS A READ INSIDE A MOVE, NOT A MOVE. Every
+# gate-then-phase pair sits inside a served list, and the rules block now says
+# that list is one move (`_A_SERVED_LIST_IS_ONE_MOVE`). A Foundry-Next taken
+# here answers with the same list from step (1), so "call it there when you
+# want them" read as licence to restart the list; the sentence now says its
+# answer replaces nothing and names the step that still comes next.
+#
+# lead-stalls GI-008 (D-048) — THE STEP AFTER THE READ IS THE LIST'S, NOT
+# ALWAYS A Foundry-Phase. This said "the step after it is still that list's
+# Foundry-Phase", true on the ten lists whose gate and phase are adjacent and
+# false on `transition_to_done`, whose gate is followed by the strip and its
+# commit. Driven, a lead obeying it sealed F6 with the corpus still committed:
+# the note and the list gave two next calls. One sentence serves every list, so
+# it names the step by its place in the list rather than by its tool, and the
+# gate advance notice in `foundry_next_action` names the concrete step.
 _GATE_THEN_PHASE_EXCEPTION = (
-    "Foundry-Next between a passing Foundry-Gate and its Foundry-Phase is "
-    "OPTIONAL — the gate no longer consumes the ordering token, so "
-    "Foundry-Phase straight after a passing Foundry-Gate is accepted. That is "
-    "where the INSPECT mode (its width) and the rule that fired are announced, "
-    "so call it there when you want them; never call it to satisfy the "
-    "protocol."
+    "Foundry-Next straight after a passing Foundry-Gate is OPTIONAL — the "
+    "gate no longer consumes the ordering token, so the list's Foundry-Phase "
+    "is accepted without it. It is a read and not a move: that is where the "
+    "INSPECT mode (its width) and the rule that fired are announced, its "
+    "answer never replaces the list you are making, and the step after it is "
+    "still the step your list numbers after that Foundry-Gate. Never call it "
+    "to satisfy the protocol."
 )
 
 
 
 _GATE_THEN_PHASE_NOTE = "\n" + _GATE_THEN_PHASE_EXCEPTION
+
+
+
+#: lead-stalls GI-008 / ST-003 / ST-004 / US-003 (D-039) — THE SPAWN-PROMPT
+#: ORDER, DECLARED ONCE.
+#:
+#: The standing rule said every spawn passes the `dispatch` block and then,
+#: LAST, the `progress_protocol` block (D-035). Three of the five dispatch
+#: steps printed under that rule still said the dispatch block alone:
+#: `transition_to_cast` (6), `build_castings`/undispatched (4) and
+#: `fix_defects`/idle (6). Each payload therefore carried two answers to "what
+#: is the Agent prompt", and a lead obeying the step spawned a teammate that
+#: was never told its ledger. Driven, that parked a CAST wave (END YOUR TURN
+#: over nothing, then a re-dispatch of a wave already accepted) and left a
+#: GRIND cycle reading as live over no running agent.
+#:
+#: Five hand-typed copies of one order is how three of them went stale, so the
+#: order is DATA here: each phase names its blocks, each block has one label
+#: and one description, and `_spawn_prompt` renders both the rules block's
+#: sentence and every spawn step's prompt clause. The two cannot disagree,
+#: because they are one rendering of one tuple.
+_PROMPT_BLOCKS: dict[str, tuple[str, str]] = {
+    "dispatch": (
+        "dispatch",
+        "the returned `dispatch` field VERBATIM, which names the prompt FILE "
+        "and the sha256 the teammate must read that file to obtain (the "
+        "`prompt` field is null by default and is NOT what you pass)",
+    ),
+    "grind_cycle_context": (
+        "cycle_context",
+        "the returned `grind_cycle_context` block VERBATIM (the files earlier "
+        "cycles changed; a response without one adds nothing here)",
+    ),
+    "defects": (
+        "defects",
+        "the defect list, in a '## Defects to fix this cycle:' block",
+    ),
+    "alignment_block": (
+        "alignment",
+        "that task's `alignment_block` from the Foundry-Tasks result, "
+        "VERBATIM — server-generated, it names the originating defects, the "
+        "requirement ids, the owning casting and file of the fix, and the "
+        "sibling files this casting owns that cite those ids, so never "
+        "summarise it and never compose your own (a task without one adds "
+        "nothing here)",
+    ),
+    "progress_protocol": (
+        "progress_protocol",
+        "LAST, the returned `progress_protocol` block VERBATIM, which is what "
+        "makes the teammate write its progress ledger and its done line",
+    ),
+}
+
+_SPAWN_PROMPT_ORDER: dict[str, tuple[str, ...]] = {
+    "cast": ("dispatch", "progress_protocol"),
+    "grind": (
+        "dispatch", "grind_cycle_context", "defects", "alignment_block",
+        "progress_protocol",
+    ),
+}
+
+
+def _spawn_prompt(blocks: tuple[str, ...]) -> str:
+    """The prompt clause for a spawn passing ``blocks``, in their order."""
+    listed = "; ".join(
+        f"({chr(ord('a') + index)}) {_PROMPT_BLOCKS[block][1]}"
+        for index, block in enumerate(blocks)
+    )
+    order = " → ".join(_PROMPT_BLOCKS[block][0] for block in blocks)
+    return (
+        "its prompt is these blocks, each BELOW the one before and never "
+        f"inside another: {listed}. Order: {order}."
+    )
+
+
+#: lead-stalls FR-015 / US-003 / ST-004 / CT-003 (D-038) — A SPAWN DOOR AND
+#: ITS AGENT CALL ARE ONE MOVE.
+#:
+#: Both spawn doors write each teammate's first ledger line
+#: (`{"step": "dispatched", "seeded_by": "server"}`) before they return, and a
+#: fresh line reads as a progressing agent. A lead that called Foundry-Next
+#: between the door and its Agent call — which the standing "call Foundry-Next
+#: after each step" told it to — was answered END YOUR TURN with no Agent
+#: running: a CAST wave, a GRIND cycle and a refused casting's re-dispatch all
+#: parked that way when driven.
+#:
+#: THE READING SIDE CANNOT SEPARATE THE TWO STATES, WHICH IS WHY THE REMEDY IS
+#: THIS SENTENCE. A seed-only ledger is both "door returned, no Agent yet" and
+#: "Agent spawned, still reading its prompt file", and nothing this server
+#: records tells them apart: the seed is identical in both, and the Agent call
+#: leaves no trace a guidance read can see. Answering the seed with "spawn it
+#: now" would duplicate EVERY spawn on the ordinary path, where the lead calls
+#: Foundry-Next seconds after its Agent call and before the teammate's first
+#: line. So the reading keeps a fresh seed as running, and this makes that
+#: true: the lead never stands between the door and the Agent, and the step
+#: after the spawn is the served list's next step — END YOUR TURN, or the
+#: `redispatch` list's SendMessage (D-045) — never a Foundry-Next. Quoted by the
+#: rules block and by every spawn step, per the `_GATE_THEN_PHASE_EXCEPTION`
+#: discipline.
+_SPAWN_IS_ONE_MOVE = (
+    "A spawn door (Foundry-Cast-Wave, Foundry-Spawn-Teammate) and the Agent "
+    "call its answer feeds are ONE move: the Agent call comes straight after "
+    "the door, with no Foundry-Next between them, because the door has "
+    "already written each teammate's first ledger line and a Foundry-Next "
+    "taken in between reads that teammate as running while no Agent exists."
+)
+
+#: lead-stalls GI-008 / FR-015 / CT-003 / US-003 (D-044, D-045) — THE WHOLE
+#: SERVED LIST IS ONE MOVE, THE SPAWN PAIR ABOVE BEING ONE CASE OF IT.
+#:
+#: The rules block read "Call Foundry-Next after each step and follow it", and
+#: a Foundry-Next answers from the run state, not from how far through a list
+#: the lead has got. Driven at 373e2d1, three lists went wrong on it: the CAST
+#: wave-complete and GRIND dispatch lists were served again from step (1)
+#: after their Team-Down, so Foundry-Gate and Foundry-Tasks were never
+#: reached; the refused casting's re-dispatch was answered END YOUR TURN after
+#: its Agent call, so its SendMessage never went; and the GRIND dispatch was
+#: answered `cleanup_teams` after its Team-Up, tearing down the team it had
+#: just registered.
+#:
+#: The reading side cannot tell "step 2 of 8 made" from "nothing made yet" —
+#: it has the same files either way — so, as for the spawn pair, the remedy is
+#: the sentence: Foundry-Next comes after the list's last step. The
+#: gate-then-phase read is the one Foundry-Next a list tolerates inside it,
+#: and `_GATE_THEN_PHASE_EXCEPTION` says its answer replaces nothing.
+#:
+#: The sentence itself is `teams.py#SERVED_LIST_IS_ONE_MOVE`, because
+#: Team-Down's `next_call` — a tool answer received mid-list — quotes it too,
+#: and this module imports that one, never the reverse. Only the spawn clause,
+#: which points at the rule printed beneath it here, is added on this side.
+_A_SERVED_LIST_IS_ONE_MOVE = (
+    SERVED_LIST_IS_ONE_MOVE
+    + " A spawn door and the Agent call it feeds are one step of that move "
+    "(the spawn rule below)."
+)
+
+#: The rules block's spawn sentence, rendered from the same declaration.
+_SPAWN_PROMPT_RULE = (
+    "Every spawn, CAST and GRIND, passes Agent exactly these blocks. CAST: "
+    + _spawn_prompt(_SPAWN_PROMPT_ORDER["cast"])
+    + " GRIND: "
+    + _spawn_prompt(_SPAWN_PROMPT_ORDER["grind"])
+)
 
 
 
@@ -1022,17 +1668,40 @@ _STANDING_CRITICAL_RULES = (
     # This line used to end at "follow it." full stop, which a lead reading
     # top-to-bottom took as unconditional and which contradicted the note
     # `_GATE_THEN_PHASE_NOTE` carries at the tail of the same payload.
-    "\n- NEVER stop between phases. Call Foundry-Next after each step and "
-    "follow it. REQUIRED everywhere except exactly one place: "
-    + _GATE_THEN_PHASE_EXCEPTION
-    + " Skipping it there is correct and is not a shortcut; skipping it "
-    "anywhere else is."
-    "\n- NEVER deliberate for more than 30 seconds between tool calls. If you catch yourself thinking, call Foundry-Next and execute whatever it says."
+    # lead-stalls D-038 — and a spawn door with its Agent call is ONE step,
+    # which is what the spawn rule below says in full.
+    # lead-stalls D-044 / D-045 — "Call Foundry-Next after each step" is gone:
+    # the whole served list is the move, and the one Foundry-Next inside it is
+    # the gate-then-phase read, which changes no step.
+    "\n- NEVER stop between phases. " + _A_SERVED_LIST_IS_ONE_MOVE
+    + " The one Foundry-Next a list tolerates between two of its steps is "
+    "the gate-then-phase read: " + _GATE_THEN_PHASE_EXCEPTION
+    + " Skipping it there is correct and is not a shortcut."
+    "\n- NEVER deliberate for more than 30 seconds between tool calls. If you "
+    "catch yourself thinking, make the next step of the list you were served, "
+    "and call Foundry-Next after its last step."
     "\n- NEVER narrate progress as 'Checkpoint \u2014 X complete', 'Checkpoint reached', 'Milestone \u2014 X', or similar. Foundry has NO checkpoints. You are not a checkpointing orchestrator. Execute the next tool call silently and keep moving."
     "\n- NEVER skip SIGHT because 'no URL.' If frontend files exist, you need a URL. Gate will block."
     "\n- NEVER spawn foundry:teammate agents (CAST or GRIND) with run_in_background=true. They are foreground, TeamCreate-managed, and must run through Foundry-Cast-Wave or Foundry-Spawn-Teammate + verbatim Agent. Background-spawning bypasses the router architecture and breaks spec fidelity."
-    "\n- NEVER modify, paraphrase, or augment a prompt returned by Foundry-Spawn-Teammate. Pass it to Agent VERBATIM. GRIND is the only exception: append (a) the `grind_cycle_context` block if returned (prior-cycle file changes) and (b) the '## Defects to fix this cycle:' block BELOW the prompt, in that order. Never inside the prompt."
-    "\n- If the user typed a message, treat it as a directive. Absorb and keep going."
+    # lead-stalls GI-008 / ST-004 / US-003 (D-035) — THE RULE NAMES THE BLOCK
+    # EVERY SPAWN PASSES. This read "Pass it to Agent VERBATIM. GRIND is the
+    # only exception: append ...", printed on every payload — including above
+    # the CAST `redispatch` branch, whose step (2) orders the
+    # `progress_protocol` block appended BELOW the dispatch (D-030). The two
+    # could not both be obeyed, and a lead obeying this one spawned a teammate
+    # that was never told its ledger: its seed line read as a running agent for
+    # fifteen minutes, then as an undispatched wave, and re-acceptance was never
+    # reached. `commands/start.md` rule 1 and `Foundry-Spawn-Teammate`'s own
+    # `instructions` already say the block goes BELOW, LAST, in every phase, so
+    # the rule says it too and GRIND's exception is only the defect material.
+    #
+    # lead-stalls D-039 / D-038 — rendered from `_SPAWN_PROMPT_ORDER` and
+    # quoting `_SPAWN_IS_ONE_MOVE`, the two declarations every spawn step
+    # renders from too, so this line and the steps under it are one text.
+    "\n- NEVER modify, paraphrase, or augment a prompt returned by "
+    "Foundry-Spawn-Teammate or Foundry-Cast-Wave. "
+    + _SPAWN_PROMPT_RULE + " " + _SPAWN_IS_ONE_MOVE
+    + "\n- If the user typed a message, treat it as a directive. Absorb and keep going."
     # D-136 — THE THIRD ENDING. This read "The foundry runs until F6 DONE or an
     # error stops it", which ST-001 / CT-004 made false: a halt ends a run in a
     # named HALTED state reached by a SUCCESSFUL transition, which is neither
@@ -1108,389 +1777,2265 @@ def _halt_cause(member: object) -> str:
     return _HALT_CAUSE_SENTENCES.get(member, _HALT_CAUSE_UNNAMED)
 
 
-_ACTION_IMPERATIVES = {
-    "init": "YOUR NEXT CALL: Foundry-Init (start a new run)",
+#: lead-stalls GI-004 / FR-002 / FR-006 / OT-003 — ONE SPELLING OF THE WAIT
+#: POLICY.
+#:
+#: Three lead-facing surfaces state it: the `build_castings` and `fix_defects`
+#: teammates-live branches below, and the stall notice's WAITING arm in
+#: `foundry_next_action`. lead-stalls FR-006 exists because the third of those
+#: contradicted the first two: it ended by telling the lead to wait and then
+#: re-issue the guidance call, which is a poll, while the imperative forbade
+#: that same call outright while waiting. A lead reading ONE payload was handed
+#: both instructions at once, and they cannot both be followed.
+#:
+#: Declared once and referenced, per the `_GATE_THEN_PHASE_EXCEPTION` /
+#: `_STANDING_CRITICAL_RULES` discipline: this file's documented failure mode is
+#: a rule stated in N copies becoming a rule stated N different ways, and
+#: `tests/orchestration/test_guidance.py#test_the_optional_rule_has_one_spelling`
+#: is the guard that was written the last time it happened.
+#:
+#: lead-stalls GI-004's violation column is "replacement text that tells the
+#: lead to sleep,
+#: poll, or loop while waiting", so the sentence names all three and denies
+#: them. What replaces the poll is the harness's own completion notification
+#: (lead-stalls ST-001 / ST-002): the lead ends its turn, the session idles
+#: while the run
+#: advances, and the notification re-enters it. That is a WAKE, not a WAIT LOOP,
+#: which is why ending the turn here does not contradict the standing "NEVER
+#: stop between phases" rule — the lead is not stopping, it is yielding the turn
+#: and resuming on an event.
+_WAITING_IS_NOT_STOPPING = (
+    "Waiting on a running agent is not stopping the run and it is not a "
+    "stall: END YOUR TURN, and the harness wakes you with a completion "
+    "notification the moment an agent finishes. Do NOT sleep, do NOT poll, do "
+    "NOT re-call a tool in a loop to pass the time. When the notification "
+    "arrives, call Foundry-Next and follow what it says then."
+)
+
+#: lead-stalls GI-008 (D-019) — WHAT THE WAITING NOTICE SAYS WHEN THE
+#: IMPERATIVE BENEATH IT WAS NOT CHOSEN FROM THE ROSTER IT REPORTS.
+#:
+#: The notice exists so a long gap with agents running is not called
+#: deliberation (FR-020 / FR-036), and that half holds for every action. The
+#: policy above is an IMPERATIVE, though, and appending it to a header that
+#: names calls is two imperatives in one payload. So beside any header other
+#: than a `live` branch the notice keeps its report and hands the move back.
+_WAITING_REPORTS_ONLY = (
+    "This notice is a report and names no move: the imperative below is this "
+    "run state's one next call."
+)
+
+
+#: lead-stalls FR-006 / GI-004 / US-002 / OT-003 (D-005) — WHAT THE `CONTEXT:`
+#: BLOCK OF A BRANCHED ACTION SAYS INSTEAD OF A SECOND SEQUENCE.
+#:
+#: `foundry_next_action` assembles ONE payload out of two lead-facing surfaces:
+#: the imperative header, which `_select_branch` picks from the roster this
+#: server read on THIS call, and the `CONTEXT:` block printed directly beneath
+#: it, which is whatever `_compute_next_action` put in `instructions`. Only the
+#: first is substituted on run state. So a CONTEXT that named the crossing
+#: wrote a SECOND, unconditional sequence beside a state-chosen one, and the
+#: two disagreed the moment the state moved.
+#:
+#: They did, on every F1 call. The arm read "CAST phase: teammates are
+#: building. Wait for all tasks to complete. When done: shut down team,
+#: TeamDelete, Foundry-Team-Down, then Foundry-Phase(phase='cast')." — shipped
+#: immediately below an imperative that had just said END YOUR TURN, do NOT
+#: poll, do NOT re-call a tool in a loop. Three defects in one block:
+#:
+#:   1. A bare wait naming no mechanism, which is lead-stalls GI-004's
+#:      violation column verbatim and the same shape the Problem Statement
+#:      condemns in the entry this run rewrote.
+#:   2. "teammates are building" asserted while the roster read on the SAME
+#:      call had just measured that none are.
+#:   3. A crossing named WITHOUT the `Foundry-Gate(phase='inspect')` that
+#:      guards it — the gate the wave-complete branch above had just added.
+#:
+#: THE RULE: the CONTEXT of a branched action names no next call and no wait.
+#: lead-stalls GI-008 / FR-007 (D-051..D-053) extend it to EVERY action the
+#: router returns, branched or not: twelve step-list arms still wrote out
+#: calls of their own, and three of them disagreed with their header — the
+#: ASSAY crossing in the opposite order, the F6 crossing opening on a gate the
+#: report it named last must precede, and a filing no step made.
+#: It carries what the imperative cannot — the counts and readings this phase
+#: measured — and defers the sequence to the one surface that knows the run
+#: state. Declared once and appended, per the `_GATE_THEN_PHASE_NOTE` /
+#: `_WAITING_IS_NOT_STOPPING` discipline: two hand-typed copies of this is how
+#: lead-stalls FR-006's contradiction arose in the first place.
+#:
+#: Nothing is lost by deferring. The F1 crossing is named by
+#: `_CAST_WAVE_COMPLETE`, gate included; the F3 crossing by
+#: `_ACTION_IMPERATIVES["transition_to_inspect"]`, which is the action this
+#: router returns once the blocking-defect count is zero and no GRIND agent is
+#: running (lead-stalls D-017).
+_BRANCHED_ACTION_CONTEXT = (
+    " Your next call is the imperative printed ABOVE this block: it was chosen "
+    "from the progress ledgers this server read on THIS call, so it already "
+    "answers whether your agents are still running. This block names no "
+    "sequence of its own — a second one here could only disagree with the one "
+    "above."
+)
+
+
+# --------------------------------------------------------------------------- #
+# lead-stalls FR-015 / GI-008 / CT-008 — AN IMPERATIVE THAT SERVES TWO RUN
+# STATES HOLDS
+# BOTH TEXTS AND THE SERVER PICKS ONE.
+#
+# `build_castings` and `fix_defects` were the two entries that handed the LEAD
+# the conditional instead: "YOUR NEXT ACTION depends on wave state: - IF ... -
+# IF ...". lead-stalls FR-007's defect shape is exactly that — an entry that
+# hands the lead a conditional or a judgment task instead of naming a literal
+# tool call — and the FR-007 audit over all 22 keys found these two and
+# nothing else.
+#
+# WHY MARKERS INSIDE THE ENTRY RATHER THAN A SIDE TABLE. `{gate}` / `{token}`
+# keep their values in `_ACTION_CROSSINGS`, and the obvious mirror would put
+# these branch texts in a dict beside it. That would move the most-read
+# lead-facing prose in the run OUT of `_ACTION_IMPERATIVES.values()` — the
+# population `tests/test_lead_prose.py#_lead_facing_prose` sweeps for denied
+# spellings and `tests/test_model_config.py` sweeps for steerable-model claims.
+# D-226 is the defect where a scan window was narrower than the rule it stated,
+# and it was measured on THIS dict. So the entry holds every branch it can
+# emit, both sweeps keep seeing all of it, and only the selection is code.
+#
+# WHY IT RESOLVES LIKE `{halt_cause}` AND NOT LIKE `{gate}`. An unresolved
+# `{gate}` discards the imperative and takes the generic header, which reads
+# "Execute the first tool call mentioned. Do not deliberate." — the exact
+# conditional-judgment push lead-stalls GI-008 forbids the lead to receive.
+# `_select_branch`
+# is therefore TOTAL over every input, like `_halt_cause`: there is no liveness
+# reading for which a branched entry emits a marker or falls through.
+_BRANCH_OPEN = "[[branch:"
+_BRANCH_CLOSE = "]]"
+
+#: The branch every branched entry must declare, and the one a state with no
+#: text of its own resolves to. `fix_defects` declares `live` and `idle` only:
+#: with no agent running it is emitted ONLY while blocking defects are open, so
+#: "no agent is running" means dispatch teammates whether they were never
+#: spawned or finished with work still open, and one text serves both.
+_BRANCH_FALLBACK = "idle"
+
+
+def _parse_branches(text: str) -> dict[str, str]:
+    """Split a branched imperative into ``{state: text}``; ``{}`` if unbranched."""
+    if _BRANCH_OPEN not in text:
+        return {}
+    branches: dict[str, str] = {}
+    for chunk in text.split(_BRANCH_OPEN)[1:]:
+        name, _, body = chunk.partition(_BRANCH_CLOSE)
+        branches[name.strip()] = body.strip("\n")
+    return branches
+
+
+def _branch_state(liveness: object) -> str:
+    """Which run state the lead stands in, from `_waiting_on_agents`
+    (lead-stalls CT-008).
+
+    TOTAL over every input, including ``None`` and a reading that failed: a
+    watchdog that cannot answer must not be able to leave the lead without an
+    imperative, which is the same rule `_waiting_on_agents` states about its own
+    failure paths.
+
+    `cast_wave_pending` IS THE FIELD THAT ANSWERS, AND `roster_agents` IS ONLY
+    ITS FALLBACK (lead-stalls D-009 / D-010).
+    ---------------------------------------------------------------------------
+    This read `roster_agents` alone, on the argument that a progress ledger is
+    written once and stays written so the roster remembers a wave the teardown
+    has already unregistered. That argument is sound and the field it chose is
+    not: the roster counts EVERY ledger in the run, so it cannot tell "wave N
+    finished" from "wave N+1 not started". The two readings are byte-identical
+    in it — `{"waiting": False, "roster_agents": >0, "teams_active": *}` — and
+    this run stood in the first of them between its own two waves while being
+    handed `_CAST_WAVE_COMPLETE`: tear the team down, gate, cross into F2, with
+    a third of the castings never built. lead-stalls US-001 requires the lead to
+    dispatch the NEXT WAVE in that turn, and lead-stalls FR-015 locks that the
+    server substitutes the RIGHT branch; a field that cannot express wave
+    position cannot choose it.
+
+    So `_waiting_on_agents` now measures the position and publishes it, and this
+    reads that answer: `cast_wave_pending` is the lowest manifest wave holding a
+    casting that has not declared itself done, `0` when every wave is done, and
+    ABSENT when the manifest could not be read.
+
+    lead-stalls D-013 — AND AN ABSENT POSITION OWES `undispatched`, BECAUSE THE
+    ROSTER FALLBACK WAS THE SAME DEFECT WITH THE MANIFEST TAKEN AWAY.
+    ---------------------------------------------------------------------------
+    The absent case used to fall through to `if row.get("roster_agents"): return
+    "idle"` — the pre-change reading, kept on the argument that a non-empty
+    roster is right about the one thing it ever knew. It is not, and the
+    argument is the one D-009 and D-010 were filed against, restated: a
+    non-empty roster cannot tell "wave 1 done, wave 2 never dispatched" from
+    "the final wave is done", and for `build_castings` `idle` IS
+    `_CAST_WAVE_COMPLETE` — tear the team down, gate, cross into F2. So a
+    manifest that did not answer was handed the teardown, and it was handed it
+    with TWO wrong results, not one: `_CAST_WAVE_COMPLETE`'s closing sentence
+    reads "this server read the manifest and the progress ledgers on this call"
+    — the manifest read FAILING is what put the reading on that arm — and
+    `{built_wave}` then defaulted to `_CAST_WAVE_DEFAULT`, naming
+    `cast-{run}-wave-1` on a run whose last CAST wave was 2.
+
+    THE ASYMMETRY IS WHAT DECIDES IT, and it is not close. A spurious
+    `undispatched` costs a redundant `TeamCreate` / `Foundry-Team-Up` that
+    answers "already registered" — `_CAST_WAVE_UNDISPATCHED` says so in as many
+    words, and step (3) is still where the dispatch begins. A spurious `idle`
+    crosses a phase gate over castings nothing built and tears down a team named
+    after the wrong wave. One direction wastes a call; the other loses a third
+    of the build. A watchdog that cannot answer takes the cheap direction.
+
+    Nothing reads `roster_agents` here any more. It is still measured and still
+    published on the result — `_cast_wave_position` needs the roster to place
+    the wave at all, and lead-stalls FR-005 puts the count on the payload — but
+    it decides no branch. The manifest and the ledgers do.
+
+    lead-stalls D-003 — AND `teams_active` IS NOT READ HERE, BECAUSE A
+    REGISTERED TEAM IS NOT DISPATCHED WORK.
+    ---------------------------------------------------------------------------
+    This line read `roster_agents or teams_active`, and the disjunct resolved
+    `{"waiting": False, "roster_agents": 0, "teams_active": True}` to `idle`.
+    That reading is the lead standing between `Foundry-Team-Up` and its FIRST
+    Agent spawn — between steps (4) and (6) of the `transition_to_cast` sequence
+    this same table hands out — so a lead with ZERO castings built was handed
+    `_CAST_WAVE_COMPLETE` and told to tear the team down, gate, and cross into
+    F2. lead-stalls FR-015 locks "the server substitutes the RIGHT one using
+    `_waiting_on_agents` at emission"; the disjunct substituted the wrong one.
+
+    The disjunct was added for the TEARDOWN reading, and `roster_agents` already
+    carries that one on its own: the ledger outlives the team. So the disjunct
+    only ever contributed the reading it got wrong. A registered team is
+    evidence that a TEAM exists; it is never evidence that work was dispatched
+    to it, and the ledgers are the only thing that answers that.
+    """
+    row = liveness if isinstance(liveness, dict) else {}
+    if row.get("waiting"):
+        return "live"
+    # lead-stalls D-009 / D-010 — the wave position when the manifest answered,
+    # and only then the roster. `bool` is excluded for `current_cycle`'s reason:
+    # `True` is not wave 1, and `False` is not "every wave is done".
+    pending = row.get("cast_wave_pending")
+    if isinstance(pending, int) and not isinstance(pending, bool):
+        return "undispatched" if pending > 0 else "idle"
+    # lead-stalls D-013 — a reading that did not MEASURE a wave position owes
+    # the dispatch branch, never the teardown. See the docstring above.
+    return "undispatched"
+
+
+def _casting_ids(value: object) -> list[str]:
+    """A reading's casting-id list, total over every input (lead-stalls D-020).
+
+    Only a non-empty string or a non-bool int is an id: `True` is not casting
+    1, for `current_cycle`'s reason. Anything else answers ``[]``, which reads
+    as "nothing owed", so a malformed reading can select neither acceptance
+    branch and can never leave a `{casting}` slot to be filled from nothing.
+    """
+    if not isinstance(value, list):
+        return []
+    return [
+        str(item) for item in value
+        if (isinstance(item, str) and item)
+        or (isinstance(item, int) and not isinstance(item, bool))
+    ]
+
+
+def _acceptance_state(liveness: object) -> str | None:
+    """`refused` / `redispatch` / `unaccepted` when a CAST casting's acceptance
+    is owed, else ``None`` (lead-stalls ST-004 / D-020).
+
+    A-014's premise was "Foundry-Next already knows whether the casting was
+    accepted", and it did not: `_cast_wave_position` counted a casting built on
+    its own ledger `done` line, which the teammate writes BEFORE the lead calls
+    `Foundry-Accept-Casting`. So a refused casting read as built, and the
+    refusal's `next_call` — "Call Foundry-Next now." on every path, FR-011 —
+    sent the lead to tear the wave down (team up: `cleanup_teams`; team down:
+    `_CAST_WAVE_COMPLETE`), which is the one thing a refusal never owes.
+
+    The two lists come from `_cast_wave_position`, which reads the verdict
+    `foundry_accept_casting` records. `refused` outranks `unaccepted` because
+    re-accepting a casting nobody has touched since its refusal only buys the
+    same refusal again.
+
+    lead-stalls D-022 — AND A REFUSAL IS TWO STATES, CHOSEN FROM THE SAME
+    READING'S TEAM SCAN. The refused branch used to hold both answers —
+    "send it back; only a send that answers that the teammate cannot be
+    reached takes the re-dispatch step" — and a sentence predicting which one
+    the lead would need. That is the conditional lead-stalls GI-008 forbids:
+    the lead's call after the send depended on reading the send's answer. The
+    server already held the input the prediction was made from, so it picks:
+    `refused` (the team is registered, the teammate that built it is sent the
+    refusal) or `redispatch` (it is not, and a fresh teammate is). A reading
+    that did not measure the team scan owes `redispatch`, on the D-013
+    asymmetry: a spare teammate costs a spawn, a message sent to a torn-down
+    team parks the run with nobody told.
+
+    lead-stalls D-031 — AND THE TEAM ASKED ABOUT IS THE REFUSED CASTING'S OWN.
+    `teams_active` is any registered team directory OR any live teammate pane
+    ON THE MACHINE, so one teammate pane in another project's tmux session read
+    as "the CAST team is still registered" over a run that had registered
+    none, and the lead was told to message a teammate that did not exist and
+    end its turn. The choice is now the one `_team_work_in_flight` already
+    makes: is `cast-{run}-wave-{W}`, W the refused casting's own wave, among
+    the REGISTERED names. The panes decide nothing here. A name the reading did
+    not publish, or a registry it did not read, answers `redispatch`, on the
+    asymmetry above.
+    """
+    row = liveness if isinstance(liveness, dict) else {}
+    if _casting_ids(row.get("cast_refused")):
+        own = row.get("cast_refused_team")
+        registered = row.get("teams_registered")
+        return (
+            "refused"
+            if isinstance(own, str) and isinstance(registered, list)
+            and own in registered
+            else "redispatch"
+        )
+    if _casting_ids(row.get("cast_unaccepted")):
+        return "unaccepted"
+    return None
+
+
+def _branch_states(liveness: object) -> tuple[str, ...]:
+    """Every run state the reading stands in, most urgent first
+    (lead-stalls FR-015 / CT-008 / ST-004).
+
+    LIVE COMES FIRST, AND ACCEPTANCE ONLY WHEN NOTHING IS RUNNING. A lead woken
+    by one teammate's completion while another is still building is owed END
+    YOUR TURN (lead-stalls FR-002 / ST-002): the finished casting's acceptance
+    is still owed when the last notification arrives, and the reading taken
+    then names it. Putting acceptance first would turn every mid-wave wake into
+    a second sequence beside a running wave, which is the shape lead-stalls
+    GI-008 forbids a payload to carry.
+
+    `_select_branch` takes the FIRST state the entry declares, so an entry that
+    declares no acceptance branch — `fix_defects`, `run_streams` — answers on
+    the base state exactly as it did before this reading existed.
+    """
+    base = _branch_state(liveness)
+    if base == "live":
+        return (base,)
+    owed = _acceptance_state(liveness)
+    return (owed, base) if owed else (base,)
+
+
+def _branch_name(branches: dict[str, str], states: tuple[str, ...]) -> str:
+    """The declared branch the first matching state resolves to. Total."""
+    for candidate in (*states, _BRANCH_FALLBACK):
+        if candidate and branches.get(candidate):
+            return candidate
+    # Total tail: a branched entry always holds at least one branch, so the
+    # lead receives prose rather than a marker even if a later edit drops the
+    # declared fallback. The suite pins that no shipped entry needs this.
+    return next(iter(branches))
+
+
+def _select_branch(text: str, *states: str) -> str:
+    """The ONE branch of a multi-state imperative the lead receives
+    (lead-stalls GI-008). ``states`` is a preference order; the first one the
+    entry declares wins, then `_BRANCH_FALLBACK`."""
+    branches = _parse_branches(text)
+    if not branches:
+        return text
+    return branches[_branch_name(branches, states)]
+
+
+def _chosen_branch(action: str, liveness: object) -> str | None:
+    """Which declared branch `_format_imperative_header` hands the lead for
+    ``action`` on this reading, or ``None`` for an unbranched entry.
+
+    lead-stalls GI-008 / D-019 — the stall notice asks THIS, so the notice and
+    the header are two readers of one selection and cannot disagree about
+    whether the lead was told to end its turn.
+    """
+    branches = _parse_branches(_ACTION_IMPERATIVES.get(action, ""))
+    if not branches:
+        return None
+    return _branch_name(branches, _branch_states(liveness))
+
+
+#: lead-stalls D-009 / D-012 — THE THREE SLOTS A BRANCH CAN CARRY, AND WHY EACH
+#: RESOLVES THROUGH A TOTAL HELPER RATHER THAN THROUGH A LOOKUP THAT CAN MISS.
+#:
+#: `{run}` was the only slot these entries had, so the wave and the cycle were
+#: LITERALS beside it: `cast-{run}-wave-1`, `grind-{run}-cycle-N`. The first is
+#: wrong the moment a run has two waves — corrected wave-2 routing would have
+#: re-dispatched wave 1 over castings already accepted — and the second reached
+#: the lead as the character `N`, which is not a team name and which the
+#: `fix_defects` payload carries nothing to resolve. The lead supplied a number
+#: from its own reckoning, which is the judgment task lead-stalls FR-007 defines
+#: as the defect.
+#:
+#: All three answer for EVERY input, on `_halt_cause`'s side of the line rather
+#: than `{gate}`'s: an unresolved slot here would discard the imperative and
+#: take the generic "Execute the first tool call mentioned. Do not deliberate."
+#: header, which is the conditional-judgment push lead-stalls GI-008 forbids.
+#: The declared defaults are the values the entries held as literals, so a
+#: reading that cannot answer emits exactly what shipped before this change.
+#:
+#: lead-stalls D-083 — `_grind_cycle` and `_GRIND_CYCLE_DEFAULT` live in the
+#: leaf, `artifacts.py`, and are imported here unchanged. The same spelling
+#: names every nyquist result file, and the DONE seal reads those files from a
+#: layer that cannot import this module.
+_CAST_WAVE_DEFAULT = "1"
+
+
+def _wave_number(value: object, default: str) -> str:
+    """A wave/cycle slot's value as a string, total over every input."""
+    if isinstance(value, bool) or not isinstance(value, int):
+        return default
+    return str(value) if value >= 1 else default
+
+
+def _cast_wave(liveness: object) -> str:
+    """`{wave}` — the CAST wave to DISPATCH, from the reading `_branch_state`
+    routed on (lead-stalls FR-015: the same `_waiting_on_agents` result, never
+    a second measurement of a roster that has moved since)."""
+    row = liveness if isinstance(liveness, dict) else {}
+    return _wave_number(row.get("cast_wave_pending"), _CAST_WAVE_DEFAULT)
+
+
+def _built_cast_wave(liveness: object) -> str:
+    """`{built_wave}` — the HIGHEST CAST wave that was dispatched, which is the
+    team the wave-complete branch tells the lead to tear down.
+
+    A separate slot from `{wave}` deliberately. The two are equal only in a
+    single-wave run, and one field meaning "the wave to dispatch" in one branch
+    and "the wave just finished" in another is the shape lead-stalls D-009 is:
+    a reading that two run states cannot be told apart in.
+    """
+    row = liveness if isinstance(liveness, dict) else {}
+    return _wave_number(row.get("cast_wave_built"), _CAST_WAVE_DEFAULT)
+
+
+#: lead-stalls D-020 — what `{casting}` resolves to when the reading names no
+#: casting. `_branch_states` selects an acceptance branch ONLY when its list is
+#: non-empty, and `_casting_slot` reads the same list first, so no shipped
+#: route reaches this. It is the `casting_id=N` register `_GRIND_DISPATCH`
+#: already uses, rather than an empty string that would print `casting_id=,`.
+_CASTING_DEFAULT = "N"
+
+
+def _casting_slot(liveness: object) -> str:
+    """`{casting}` — the casting an acceptance branch is about, total.
+
+    Read in `_acceptance_state`'s order, so the id always belongs to the branch
+    that was chosen: `refused` or `redispatch` is chosen exactly when
+    `cast_refused` is non-empty, and `unaccepted` only when it is empty. The FIRST id, because
+    `_cast_wave_position` lists them in manifest wave order, and settling the
+    lowest wave first is the order the waves were built in.
+    """
+    row = liveness if isinstance(liveness, dict) else {}
+    for key in ("cast_refused", "cast_unaccepted"):
+        ids = _casting_ids(row.get(key))
+        if ids:
+            return ids[0]
+    return _CASTING_DEFAULT
+
+
+# --------------------------------------------------------------------------- #
+# lead-stalls GI-008 / FR-007 / FR-008 / FR-015 / OT-002 / OT-013 — THE NEXT
+# CALLS ARE A STEP LIST THE ROUTER EMITS, AND THE HEADER IS ITS RENDERING
+# (D-038..D-043, on the user's ruling of 2026-09-17).
+#
+# Every imperative was a string, and the audit FR-008 discharges on judged the
+# string with a prose detector: a syntactic guard over a semantic property. It
+# took six repairs (D-023, D-029, D-032, D-034, D-041, D-043), each a
+# conditional shaped so the last widening could not see it, and the user ruled
+# for a structure rather than a seventh widening.
+#
+# So a lead's next calls are `_Step`s: one tool, its literal arguments, how
+# many, the prompt blocks a spawn passes, and a note. No field holds a
+# condition, and a choice between two calls cannot be written down, because a
+# step list only says "this, then this". `_emitted_imperative` picks the
+# branch, expands and substitutes the steps, and renders the header from them;
+# Foundry-Next publishes the same steps as `next_calls`, so the payload and the
+# prose are one answer. The audit judges the steps.
+#
+# `_ACTION_IMPERATIVES` stays a table of STRINGS rendered from this one: two
+# suites sweep its values for denied spellings and steerable-model claims, and
+# D-226 is the defect where such a window was narrower than the rule. It is a
+# rendering of `_IMPERATIVES`, never a second source.
+# --------------------------------------------------------------------------- #
+
+
+class _Step(NamedTuple):
+    """One call the lead makes, in order. There is no field for a condition."""
+
+    tool: str
+    #: The literal argument list, rendered inside the parentheses; ``None``
+    #: renders the bare tool name (TeamDelete takes none).
+    args: str | None = None
+    #: How many and in what message, e.g. "once per returned casting".
+    each: str = ""
+    #: A spawn's prompt blocks, keys of `_PROMPT_BLOCKS`, in order.
+    blocks: tuple[str, ...] = ()
+    note: str = ""
+
+
+class _Imperative(NamedTuple):
+    """One run state's next calls and the statement printed under them.
+    An empty ``steps`` is the explicit NONE the terminals and the live
+    branches answer with."""
+
+    steps: tuple[_Step, ...]
+    trailer: str = ""
+
+
+#: The yield. Not a tool, and the only step with no call: it renders as the
+#: wait policy, and it is always LAST, because whatever follows the wake is
+#: the Foundry-Next that the policy itself names.
+_END_TURN = "END YOUR TURN"
+_YIELD = _Step(_END_TURN)
+
+#: The step a `run_streams` idle branch holds in place of its stream calls,
+#: expanded at emission from the roster the router published (D-040).
+_EACH_UNRECORDED_STREAM = "{unrecorded streams}"
+
+#: lead-stalls GI-008 / FR-007 (D-053) — the step `assay_failed_loop_back`
+#: holds in place of the filing its list may owe, expanded at emission from
+#: `details["unfiled_verdicts"]`: one Foundry-Sync naming those requirements,
+#: or no step at all. `foundry_add_verdict` records a verdict and files no
+#: defect, and `Foundry-Gate(phase='grind')` refuses "No open defects to
+#: grind", so a list of Tasks, Gate and Phase served over a non-VERIFIED
+#: verdict with nothing filed could never succeed — the next Foundry-Next
+#: re-served it and the run never left F4. The filing was only in the CONTEXT
+#: ("Sync findings as defects (Foundry-Sync)"), the one surface the lead is
+#: told not to take calls from.
+#:
+#: WHY A STEP SLOT AND NOT A SECOND ACTION. The state differs only in whether
+#: the ledger holds what ASSAY found, and the rest of the list — the ASSAY-
+#: rejection door into F3 — is the same calls in the same order. A second
+#: action would restate them and grow the table the FR-008 sweep is counted
+#: over; the slot is `_EACH_UNRECORDED_STREAM`'s shape, where the router
+#: publishes the fact and the resolver turns it into steps.
+_EACH_UNFILED_VERDICT = "{unfiled verdicts}"
+
+#: lead-stalls GI-008 / FR-007 (D-055) — the step `transition_to_grind` holds
+#: in place of its teammate dispatch, expanded at emission from
+#: `details["open_defects"]`, the BLOCKING count the router published.
+#:
+#: The list is served in two run states. The ordinary one has blocking
+#: defects, and the dispatch is its point. The other is a clean INSPECT that a
+#: still-ESCALATED class holds DONE shut over (`_escalation_hold`): the class
+#: clears only at a crossing that advances the cycle counter, and from past
+#: ASSAY the one such crossing the server accepts is a GRIND opened on
+#: whatever record is open, then `inspect_start` out of F3 (lead-stalls D-057:
+#: a clean FULL F2 is served the `widen_inspect` re-open instead). There the
+#: open records are LATENT or HARDENING, which no teammate is dispatched for —
+#: the F3 arm answers `transition_to_inspect` as soon as nothing blocks — so a
+#: spawn step would hand the lead teammates for work the GRIND does not do.
+#:
+#: WHY A SLOT AND NOT A SECOND ACTION, for `_EACH_UNFILED_VERDICT`'s reason:
+#: the first three calls are the same calls in the same order, and a second
+#: action would restate them and grow the table the FR-008 sweep counts. Only
+#: an explicit integer 0 omits the dispatch; an absent or unreadable count
+#: keeps it, which is the list every other router arm serves.
+#:
+#: lead-stalls GI-008 / FR-007 (D-061) — the third state is the cap. There
+#: step (3), `grind_start`, SEALS THE RUN HALTED, and the dispatch served after
+#: it registered a team and spawned a GRIND teammate into the sealed run. The
+#: router publishes ``details["seals_halted"]`` (`_grind_start_seals`), and an
+#: explicit True omits the dispatch, so the list ends at the sealing call.
+_BLOCKING_DISPATCH = "{blocking dispatch}"
+
+#: lead-stalls GI-008 / FR-007 / ST-003 (D-089) — the GRIND spawn door step,
+#: expanded from `details["grind_carriers"]` (`_grind_carriers`): the door
+#: once per casting the server names, each with the defects it carries, a
+#: defect no casting owns among them under the casting it was routed to. An
+#: absent or empty reading keeps the step every template shows.
+_EACH_CARRYING_CASTING = "{carrying castings}"
+#: The actions whose lists can carry that step.
+_GRIND_DISPATCH_ACTIONS = ("transition_to_grind", "fix_defects")
+
+#: lead-stalls GI-008 / FR-007 — the step `halted` holds in place of the
+#: report the halt could not write, expanded from `details["report_generated"]`.
+#: The CONTEXT used to say "call Foundry-Report to write REPORT.md" beneath a
+#: header reading "YOUR NEXT CALL: NONE ... The report is generated.", which
+#: is two answers in one payload about one file.
+_UNWRITTEN_REPORT = "{unwritten report}"
+
+#: lead-stalls GI-008 / FR-007 (D-079) — the step `run_nyquist` holds in place
+#: of its auditor dispatch, expanded from `details["nyquist_batches"]`: one
+#: Agent call per batch, all in one parallel message, its prompt naming the
+#: four items the Input section of `agents/nyquist-auditor.md` lists — the
+#: run directory, the spec path, the requirement ids and the cap — and the
+#: result file its JSON summary goes to (D-081, `_EACH_UNFILED_ESCALATION`).
+#: The step served `subagent_type='foundry:nyquist-auditor'` "for each batch of
+#: 5 VERIFIED requirements" with no prompt, so the lead had to read
+#: verdicts.json, cut it into batches and write every prompt itself — D-040's
+#: judgment task, on a list the server already holds. `_EACH_UNFILED_VERDICT`'s
+#: shape: the router publishes the fact, the resolver turns it into steps.
+_EACH_NYQUIST_BATCH = "{nyquist batches}"
+
+#: lead-stalls GI-008 / FR-007 (D-081) — the step `transition_to_grind` opens
+#: with, expanded from `details["unfiled_escalations"]`: one Foundry-Sync
+#: filing the requirements a nyquist auditor escalated as ESCALATE_IMPL_BUG,
+#: or no step at all.
+#:
+#: WHY THE ESCALATION IS A SERVER FACT. `agents/nyquist-auditor.md` returns
+#: its escalations as JSON to the lead, and its tools reach no Foundry door,
+#: so the auditor cannot file one. `run_nyquist`'s trailer said "An
+#: ESCALATE_IMPL_BUG result starts a new GRIND cycle" over a list with no
+#: filing step: a lead making exactly what it was served passed the DONE gate
+#: and sealed F6 over the bug, and the only way to honour the trailer was to
+#: read every auditor's JSON for that reason and compose a filing no step
+#: named — a conditional and a judgment task. So each auditor's prompt names
+#: the result file its summary goes to, the F5.5 arm reads this cycle's files
+#: BEFORE the crossing its gate record would serve, and an escalation no open
+#: blocking defect carries is served here, ahead of the GRIND door, the way
+#: `_EACH_UNFILED_VERDICT` serves ASSAY's.
+_EACH_UNFILED_ESCALATION = "{unfiled escalations}"
+
+#: lead-stalls GI-008 / FR-007 (D-082) — the step `add_castings`' idle branch
+#: holds in place of its decomposer, expanded from the spec path and the
+#: procedure path the F0 arm publishes (`_decomposer_steps`).
+_DECOMPOSER = "{decomposer}"
+
+#: Every name a step may carry as its tool. Closed, so a step naming something
+#: the lead cannot call is caught where it is written, and pinned by the audit
+#: against the MCP server's own tool list.
+_LEAD_CALLS = frozenset({
+    "Agent", "Bash", "SendMessage", "Skill", "TeamCreate", "TeamDelete",
+    "Foundry-Accept-Casting", "Foundry-Cast-Wave", "Foundry-Context",
+    "Foundry-Gate", "Foundry-Init", "Foundry-Next", "Foundry-Phase",
+    "Foundry-Report", "Foundry-Spawn-Teammate", "Foundry-Spec-Hash",
+    "Foundry-Sync", "Foundry-Tasks", "Foundry-Team-Down", "Foundry-Team-Up",
+    "Foundry-Validate-Castings",
+    _END_TURN,
+})
+
+#: The two doors that seed a ledger before they return (D-038).
+_SPAWN_DOORS = ("Foundry-Cast-Wave", "Foundry-Spawn-Teammate")
+
+
+def _render_call(step: _Step) -> str:
+    """One step as the lead reads it."""
+    if step.tool == _END_TURN:
+        return _WAITING_IS_NOT_STOPPING
+    call = step.tool if step.args is None else f"{step.tool}({step.args})"
+    pieces = [f"{call} {step.each}" if step.each else call]
+    if step.blocks:
+        pieces.append(_spawn_prompt(step.blocks))
+    if step.note:
+        pieces.append(step.note)
+    return " — ".join(pieces)
+
+
+def _render_imperative(imperative: _Imperative) -> str:
+    """The header for one run state: its numbered steps, then its trailer."""
+    steps = imperative.steps
+    if not steps:
+        head = "YOUR NEXT CALL: NONE. "
+    else:
+        head = (
+            "YOUR NEXT CALL:\n" if len(steps) == 1
+            else "YOUR NEXT CALLS (in order):\n"
+        ) + "".join(
+            f"  ({number}) {_render_call(step)}\n"
+            for number, step in enumerate(steps, 1)
+        )
+    return head + imperative.trailer
+
+
+def _gate_advance_notice(gate: str, steps: tuple[_Step, ...] | None) -> str:
+    """The notice a passed gate prints above its list: which numbered step
+    comes next.
+
+    lead-stalls GI-008 (D-048) — this said "Proceed directly to the transition
+    step (Foundry-Phase / state update)", which is the step after the gate on
+    ten lists and not on `transition_to_done`, where the strip and its commit
+    come between them. So it names the list's own step after the gate, read
+    off the steps the header below was rendered from, and falls back to the
+    step's place in the list — never to a tool the list may not put there.
+    """
+    head = (
+        f"✅ Foundry-Gate(phase='{gate}') ALREADY PASSED — do NOT re-run it. "
+        "Proceed directly to "
+    )
+    calls = [
+        (number, step) for number, step in enumerate(steps or (), 1)
+        if step.tool == "Foundry-Gate"
+    ]
+    named = [pair for pair in calls if pair[1].args == f"phase='{gate}'"]
+    for number, _ in named or calls:
+        if number < len(steps):
+            after = steps[number]
+            call = after.tool if after.args is None else f"{after.tool}({after.args})"
+            return (
+                f"{head}step ({number + 1}) {call} in the imperative below, "
+                "the step it numbers after that gate."
+            )
+    return f"{head}the step the imperative below numbers after that gate."
+
+
+def _call_record(step: _Step) -> dict:
+    """A step as `next_calls` publishes it."""
+    return {
+        "tool": step.tool,
+        "args": step.args,
+        "each": step.each,
+        "prompt_blocks": list(step.blocks),
+        "note": step.note,
+    }
+
+
+#: lead-stalls D-040 — ONE LITERAL CALL PER STREAM THE RECORDED ROSTER NAMES.
+#:
+#: The idle branch listed TRACE and PROVE with calls, three more with
+#: qualifiers ("MIGRATION only"), and "TEST / PROBE: may also run as background
+#: Agents" with no subagent_type and no prompt, and it never named `test01` at
+#: all. Driven on this run's own roster (trace, prove, test, test01), the lead
+#: had to find test01's agent type outside the payload, write TEST's prompt
+#: itself, and check each bullet's qualifier against the CONTEXT — conditions
+#: and a judgment task to find its next calls.
+#:
+#: The server already holds the recorded roster and which of it is
+#: unrecorded, so the steps are that list: `(subagent_type, prompt)` per
+#: stream, the reading streams told to pin a snapshot IN their prompt (D-169)
+#: rather than asking the lead to add it. `sight` is the one stream the lead
+#: executes, through its skill.
+_PIN_A_SNAPSHOT = (
+    " Pin your work to a snapshot: take the HEAD sha once at start, verify "
+    "every finding against `git archive HEAD` rather than the live tree, and "
+    "cite that sha in your report."
+)
+_STREAM_AGENTS: dict[str, tuple[str, str]] = {
+    "trace": (
+        "foundry:tracer",
+        "Run TRACE wiring verification for the active foundry run."
+        + _PIN_A_SNAPSHOT,
+    ),
+    "flow_trace": (
+        "foundry:flow-tracer",
+        "Run FLOW_TRACE (flow-delta wiring verification) for the active "
+        "foundry run." + _PIN_A_SNAPSHOT,
+    ),
+    "prove": (
+        "foundry:assayer",
+        "Run PROVE (spec-to-code citation verification) for the active "
+        "foundry run." + _PIN_A_SNAPSHOT,
+    ),
+    "research_audit": (
+        "foundry:research-auditor",
+        "Run RESEARCH_AUDIT for the active foundry run." + _PIN_A_SNAPSHOT,
+    ),
+    "coverage_diff": (
+        "foundry:coverage-diff",
+        "Run COVERAGE_DIFF for the active foundry run." + _PIN_A_SNAPSHOT,
+    ),
+    "test01": (
+        "foundry:spec-test-deriver",
+        "Run TEST-01 (spec-derived contract tests) for the active foundry "
+        "run.",
+    ),
+    "test": (
+        "general-purpose",
+        "Run the TEST stream for the active foundry run: run the test suite, "
+        "verify each GRIND fix by reverting it and re-running, and record the "
+        "counts you measured through Foundry-Stream with stream 'test'.",
+    ),
+    "probe": (
+        "general-purpose",
+        "Run the PROBE stream for the active foundry run: smoke the API at the "
+        "run's target_url, and record the counts you measured through "
+        "Foundry-Stream with stream 'probe'.",
+    ),
+}
+
+#: The baseline `general-purpose` stream agents keep (test_model_config.py
+#: pins it; the model option steers only `STEERABLE_SUBAGENT_TYPES`).
+_GENERAL_STREAM_MODEL = "opus"
+
+_SIGHT_STEP = _Step(
+    "Skill",
+    "skill='foundry:sight'",
+    note=(
+        "SIGHT runs in this main thread, beside the background streams, "
+        "because Playwright works nowhere else."
+    ),
+)
+
+#: Every stream a step can name, in the order the template renders them. The
+#: expansion falls back to it for a reading that published no roster, which
+#: the router never does; it is the `{wave}` default's register, and it keeps
+#: every stream prompt inside `_ACTION_IMPERATIVES` for the prose sweeps.
+_STREAM_TEMPLATE_ROSTER = (*_STREAM_AGENTS, "sight")
+
+
+#: lead-stalls US-002 / FR-015 / CT-008 (D-065) — EVERY STREAM PROMPT CARRIES
+#: THE LEDGER CLAUSE, BECAUSE A STREAM THE SERVER CANNOT SEE IS A STREAM IT
+#: TELLS THE LEAD TO SPAWN AGAIN.
+#:
+#: `run_streams` is branched on `_waiting_on_agents` (D-019), and that reading
+#: is taken from the progress ledgers under `{run}/progress/`. The stream
+#: prompts named no ledger, so `test` — a bare `general-purpose` agent with no
+#: agent file — and `test01` wrote none in any cycle and were invisible to the
+#: reading in EVERY cycle. Driven at 0eeb798 with five streams running, the
+#: reading returned `{"waiting": false, "count": 0, "agents": []}` and the lead
+#: was served the idle branch: the instruction to dispatch all five streams
+#: that were already running. The idle branch's own tail names the cost — TEST
+#: verifies a GRIND's fixes by REVERTING each one in the same tree TRACE and
+#: PROVE are reading, so a double-dispatched TEST reverts them twice.
+#:
+#: The clause is the one `_DECOMPOSITION_WRITERS` already hands its writers,
+#: for the same reason and in the same words: a BACKGROUND agent dispatched by
+#: a bare `Agent(...)` call passes through no door, so nothing but its own
+#: prompt can hand it the protocol. The path is per-stream because the reading
+#: is per-file: `_agent_liveness_record` keys a row off `path.stem`.
+_STREAM_LEDGER_CLAUSE_TAIL = (
+    ": append one JSON line carrying timestamp (UTC ISO-8601 with the "
+    "offset), phase 'inspect' and step as the FIRST act, again at each new "
+    "step, and a LAST line that also carries 'done': true. That ledger is "
+    "what this server reads to tell a stream that is running from one that "
+    "was never spawned."
+)
+
+
+def _stream_ledger_clause(stream: str) -> str:
+    """The progress-ledger clause for one stream's prompt (D-065). Total."""
+    return (
+        " Keep a progress ledger at "
+        f"foundry-archive/{{run}}/progress/{stream}.jsonl"
+        + _STREAM_LEDGER_CLAUSE_TAIL
+    )
+
+
+def _stream_agent_step(stream: str) -> _Step:
+    """The Agent call for one stream, total over every name."""
+    subagent_type, prompt = _STREAM_AGENTS.get(
+        stream,
+        (
+            "general-purpose",
+            f"Run the {stream} verification stream for the active foundry run.",
+        ),
+    )
+    prompt += _stream_ledger_clause(stream)
+    model = (
+        f"model='{_GENERAL_STREAM_MODEL}', "
+        if subagent_type == "general-purpose" else ""
+    )
+    return _Step(
+        "Agent",
+        f"{model}subagent_type='{subagent_type}', run_in_background=true, "
+        f'prompt="{prompt}"',
+        each=f"for {stream}",
+    )
+
+
+def _stream_agent_config(stream: str) -> dict:
+    """`details.agent_configs[stream]`, from the same row the step reads."""
+    subagent_type = _STREAM_AGENTS.get(stream, ("general-purpose", ""))[0]
+    if subagent_type == "general-purpose":
+        return {
+            **agent_model(subagent_type, baseline=_GENERAL_STREAM_MODEL),
+            "subagent_type": subagent_type,
+        }
+    return {
+        "subagent_type": subagent_type,
+        "run_in_background": True,
+        "description": f"{stream}: verification stream",
+    }
+
+
+def _stream_steps(streams: object) -> tuple[_Step, ...]:
+    """The calls for the unrecorded streams, in roster order. Total.
+
+    The yield closes the list whenever an agent was spawned: a stream writes no
+    ledger line until it starts, so a Foundry-Next taken straight after the
+    spawn reads it as unrecorded and would spawn it twice. The completion
+    notification is the wake. SIGHT alone spawns nothing to wait for, so its
+    list ends at the skill.
+    """
+    names: list[str] = []
+    for name in streams if isinstance(streams, (list, tuple)) else ():
+        if isinstance(name, str) and name and name not in names:
+            names.append(name)
+    if not names:
+        names = list(_STREAM_TEMPLATE_ROSTER)
+    agents = [_stream_agent_step(name) for name in names if name != "sight"]
+    steps = list(agents)
+    if "sight" in names:
+        steps.append(_SIGHT_STEP)
+    if agents:
+        steps.append(_YIELD)
+    return tuple(steps)
+
+
+#: What a template rendering of `_EACH_UNFILED_VERDICT` names in place of the
+#: requirement ids, so the prose sweeps over `_ACTION_IMPERATIVES` see the step.
+_UNFILED_TEMPLATE = ("each non-VERIFIED requirement in verdicts.json",)
+
+
+def _verdict_filing_steps(unfiled: object) -> tuple[_Step, ...]:
+    """The filing `assay_failed_loop_back` owes first, or none. Total.
+
+    ``unfiled`` is the router's `details["unfiled_verdicts"]`: the ids of the
+    non-VERIFIED verdicts that no open BLOCKING defect's `spec_ref` names
+    (`_carried_requirements`, D-054). No field is a choice handed over. The tier:
+    ASSAY's verdict names a requirement, so the filing is on-row — `HARDENING`
+    refuses a `spec_ref`, and `LATENT` needs a reproduction the verdict does
+    not carry. The type: every verdict but VERIFIED is a `DEFECT_TYPES` member
+    (`gates.VERDICT_VALUES`), so the verdict word IS the type.
+    """
+    ids = [
+        rid for rid in unfiled if isinstance(rid, str) and rid
+    ] if isinstance(unfiled, (list, tuple)) else []
+    if not ids:
+        return ()
+    return (
+        _Step(
+            "Foundry-Sync",
+            "cycle={cycle}, findings=[one finding per requirement ("
+            + ", ".join(ids)
+            + "), each with source='assay', tier='LIVE', type=<that "
+            "requirement's verdict>, spec_ref=<that requirement id>, "
+            "class=<that requirement id>, description=<that requirement's "
+            "verdict and evidence, as verdicts.json records them>]",
+            note=(
+                "ASSAY recorded these verdicts and no open blocking defect "
+                "carries them, so the GRIND below would have nothing to "
+                "dispatch for them."
+            ),
+        ),
+    )
+
+
+#: What a template rendering of `_EACH_NYQUIST_BATCH` names in place of the
+#: ids, the spec and the result file, so the prose sweeps over
+#: `_ACTION_IMPERATIVES` see it.
+_NYQUIST_TEMPLATE = {
+    "nyquist_batches": [["each batch of 5 VERIFIED requirement ids in verdicts.json"]],
+    "spec_path": "<the run's spec path>",
+    "result_files": [
+        "foundry-archive/{run}/nyquist/cycle-{cycle}-batch-<its batch number>.json"
+    ],
+}
+
+
+def _project_relative(project_root: str, path: object) -> str:
+    """``path`` as an agent the lead spawns is told it: relative to the
+    project root where it lies beneath it, as given otherwise, ``""`` for
+    none. Total."""
+    if path is None:
+        return ""
+    try:
+        return str(Path(path).relative_to(project_root))
+    except (TypeError, ValueError):
+        return str(path)
+
+
+def _run_spec_path(project_root: str, fdir: Path, state: dict) -> str:
+    """The run's spec, from `_spec_requirement_ids` — the one climb the
+    short-ledger rung reads, so an agent is pointed at the spec whose ids the
+    gate counts."""
+    return _project_relative(
+        project_root, _spec_requirement_ids(project_root, fdir, state)[2]
+    )
+
+
+def _nyquist_dispatch(project_root: str, fdir: Path, state: dict) -> dict:
+    """What the F5.5 arm publishes for the auditor steps to expand from:
+    the batches, the spec path and each batch's result file, so no prompt is
+    left for the lead to write (D-079) and every escalation lands where this
+    server reads it (D-081, `_nyquist_escalations`). Total: an unreadable
+    ledger is no batches."""
+    batches = _nyquist_batches(_load_json(fdir / "verdicts.json"))
+    run_dir = _project_relative(project_root, fdir)
+    cycle = current_cycle(fdir)
+    return {
+        "nyquist_batches": batches,
+        "spec_path": _run_spec_path(project_root, fdir, state),
+        "result_files": [
+            f"{run_dir}/{_nyquist_result_name(cycle, number)}"
+            for number in range(1, len(batches) + 1)
+        ],
+    }
+
+
+def _nyquist_steps(details: dict) -> tuple[_Step, ...]:
+    """One nyquist-auditor Agent call per published batch, or none. Total.
+
+    lead-stalls D-080 — the prompt names all four Input items, the cap
+    included, and the calls go out in ONE parallel message: the step this
+    replaced served "all in a SINGLE parallel message", and auditors sent one
+    after another cost the batches' whole run time in series.
+    """
+    batches = details.get("nyquist_batches")
+    rows = [
+        [rid for rid in batch if isinstance(rid, str) and rid]
+        for batch in batches if isinstance(batch, (list, tuple))
+    ] if isinstance(batches, (list, tuple)) else []
+    rows = [row for row in rows if row]
+    spec = details.get("spec_path")
+    spec = spec if isinstance(spec, str) and spec else _NYQUIST_TEMPLATE["spec_path"]
+    published = details.get("result_files")
+    published = list(published) if isinstance(published, (list, tuple)) else []
+
+    def result_file(number: int) -> str:
+        path = published[number - 1] if number <= len(published) else None
+        return (
+            path if isinstance(path, str) and path
+            else _NYQUIST_TEMPLATE["result_files"][0]
+        )
+
+    return tuple(
+        _Step(
+            "Agent",
+            "subagent_type='foundry:nyquist-auditor', prompt=\"Run directory: "
+            f"foundry-archive/{{run}}/. Spec file path: {spec}. Requirement "
+            f"IDs: {', '.join(row)}. Cap: {_NYQUIST_BATCH_SIZE}. Result file: "
+            f"{result_file(number)} — write the JSON summary your Output "
+            "section defines there before you return it; it is the one record "
+            "of your escalations this server reads.\"",
+            each=(
+                f"for batch {number} of {len(rows)}, every batch's call in "
+                "ONE parallel message"
+            ),
+        )
+        for number, row in enumerate(rows, 1)
+    )
+
+
+#: What a template rendering of `_EACH_UNFILED_ESCALATION` names in place of
+#: the requirement ids, so the prose sweeps over `_ACTION_IMPERATIVES` see it.
+_ESCALATION_TEMPLATE = (
+    "each requirement a nyquist auditor escalated as ESCALATE_IMPL_BUG",
+)
+
+
+def _escalation_filing_steps(unfiled: object) -> tuple[_Step, ...]:
+    """The filing `transition_to_grind` opens with, or none. Total (D-081).
+
+    ``unfiled`` is the F5.5 arm's `details["unfiled_escalations"]`: the
+    requirements an auditor escalated as ESCALATE_IMPL_BUG this cycle that no
+    open BLOCKING defect's `spec_ref` names (`_carried_requirements`). No
+    field is a choice handed over. The tier: the auditor ran a test and saw
+    the code answer wrong, which is LIVE. The type: the test matches the spec
+    and the code does not, which is WRONG. The source is `assay`: the
+    auditor's contract calls this "an ASSAY miss — the code is wrong but was
+    marked VERIFIED", and the closed vocabulary has no NYQUIST member; the
+    concern this casting filed names that gap.
+    """
+    ids = [
+        rid for rid in unfiled if isinstance(rid, str) and rid
+    ] if isinstance(unfiled, (list, tuple)) else []
+    if not ids:
+        return ()
+    return (
+        _Step(
+            "Foundry-Sync",
+            "cycle={cycle}, findings=[one finding per requirement ("
+            + ", ".join(ids)
+            + "), each with source='assay', tier='LIVE', type='WRONG', "
+            "spec_ref=<that requirement id>, class=<that requirement id>, "
+            "description=<that requirement's escalated row — its expected, "
+            "actual and test_file — as its auditor's result file under "
+            "foundry-archive/{run}/nyquist/ records it>]",
+            note=(
+                "a nyquist auditor escalated these requirements as "
+                "ESCALATE_IMPL_BUG — its test matches the spec and the code "
+                "does not — and no open blocking defect carries them, so the "
+                "GRIND below would have nothing to dispatch for them."
+            ),
+        ),
+    )
+
+
+#: lead-stalls D-082 — the procedure the decomposer is pointed at: the
+#: /foundry:start command of the plugin this server was imported from, whose
+#: §F0.5 DECOMPOSE is the procedure. `guidance.py` sits at
+#: `<plugin>/mcp-server/src/foundry_mcp/tools/orchestration/`, so the plugin
+#: directory is its sixth parent.
+_DECOMPOSE_PROCEDURE = (
+    Path(__file__).resolve().parents[5] / "commands" / "start.md"
+)
+
+#: What a template rendering of `_DECOMPOSER` names in place of the paths.
+_DECOMPOSER_TEMPLATE = {
+    "spec_path": "<the run's spec path>",
+    "procedure_path": "<the foundry plugin's commands/start.md>",
+}
+
+
+def _decompose_dispatch(project_root: str, fdir: Path, state: dict) -> dict:
+    """What the F0 arm publishes for the decomposer step to expand from
+    (D-082): the spec, and the procedure, both as the agent reads them."""
+    return {
+        "spec_path": _run_spec_path(project_root, fdir, state),
+        "procedure_path": _project_relative(project_root, _DECOMPOSE_PROCEDURE),
+    }
+
+
+def _decomposer_steps(details: dict) -> tuple[_Step, ...]:
+    """The one decomposer Agent call, its prompt literal. Total (D-082).
+
+    The step handed the lead `prompt=<per commands/start.md §F0.5 DECOMPOSE
+    ...>` "for each domain identified from the spec (1-5 of them)": the
+    prompt was the lead's to write, the domain split and so the number of
+    calls were its own reading of the spec, and the range disagreed with the
+    procedure it pointed at, which says 2-5. That is the judgment task D-040
+    and D-079 were fixed for, with the split on top of it. The server holds
+    the spec path and the run directory, so the split moves into the agent:
+    ONE decomposer, told where the spec and the procedure are, identifies the
+    domains and writes every casting itself — which also leaves one writer of
+    `manifest.json` rather than one per domain racing on it.
+    """
+    spec = details.get("spec_path")
+    spec = spec if isinstance(spec, str) and spec else _DECOMPOSER_TEMPLATE["spec_path"]
+    procedure = details.get("procedure_path")
+    procedure = (
+        procedure if isinstance(procedure, str) and procedure
+        else _DECOMPOSER_TEMPLATE["procedure_path"]
+    )
+    return (
+        _Step(
+            "Agent",
+            "model='opus', subagent_type='general-purpose', "
+            "mode='bypassPermissions', run_in_background=true, "
+            "prompt=\"Run F0.5 DECOMPOSE for the foundry run in "
+            f"foundry-archive/{{run}}/, from the spec at {spec}: follow the "
+            f"F0.5 DECOMPOSE section of {procedure} end to end, its mode "
+            "detection choosing the V2 or the V3 procedure, and stop before "
+            "the Foundry-Gate call it closes on, which is the lead's to make. "
+            "You are the one decomposer: identify the domains as its step 4 "
+            "says, and write every casting yourself rather than spawning "
+            "writers — its entry in "
+            "foundry-archive/{run}/castings/manifest.json and its prompt file "
+            "foundry-archive/{run}/castings/casting-N-prompt.md, N being that "
+            "casting's id. Keep a progress ledger at "
+            "foundry-archive/{run}/progress/decompose.jsonl: append one JSON "
+            "line carrying timestamp (UTC ISO-8601 with the offset), phase "
+            "'decompose' and step as the FIRST act, again after each file "
+            "written, and a LAST line that also carries 'done': true.\"",
+        ),
+    )
+
+
+def _report_steps(details: object) -> tuple[_Step, ...]:
+    """The Foundry-Report a halted run owes when its halt wrote no report,
+    or none. Total: only an explicit ``report_generated: False`` owes it."""
+    if not isinstance(details, dict) or details.get("report_generated") is not False:
+        return ()
+    return (
+        _Step(
+            "Foundry-Report",
+            note=(
+                "the halt recorded no report, and this door still runs on a "
+                "halted run; a report it still cannot write comes back "
+                "refused with its cause named."
+            ),
+        ),
+    )
+
+
+def _expanded_steps(step: _Step, details: dict | None) -> tuple[_Step, ...]:
+    """``step`` as the lead receives it: a slot step expanded from what the
+    router published in ``details``, or the step itself. ``None`` is the
+    template rendering, which shows every step a slot can expand to."""
+    template = details is None
+    details = details or {}
+    if step.tool == _EACH_UNRECORDED_STREAM:
+        return _stream_steps(None if template else details.get("missing_streams"))
+    if step.tool == _EACH_UNFILED_VERDICT:
+        return _verdict_filing_steps(
+            _UNFILED_TEMPLATE if template else details.get("unfiled_verdicts")
+        )
+    if step.tool == _UNWRITTEN_REPORT:
+        return _report_steps({"report_generated": False} if template else details)
+    if step.tool == _EACH_NYQUIST_BATCH:
+        return _nyquist_steps(_NYQUIST_TEMPLATE if template else details)
+    if step.tool == _EACH_UNFILED_ESCALATION:
+        return _escalation_filing_steps(
+            _ESCALATION_TEMPLATE if template else details.get("unfiled_escalations")
+        )
+    if step.tool == _DECOMPOSER:
+        return _decomposer_steps(_DECOMPOSER_TEMPLATE if template else details)
+    if step.tool == _BLOCKING_DISPATCH:
+        count = details.get("open_defects")
+        nothing_blocks = (
+            not template and isinstance(count, int)
+            and not isinstance(count, bool) and count == 0
+        )
+        # lead-stalls D-061 — and nothing after a transition that seals the
+        # run: at the cap `grind_start` is the list's last step. Only an
+        # explicit True omits the dispatch, as only an explicit 0 does above.
+        seals = not template and details.get("seals_halted") is True
+        if nothing_blocks or seals:
+            return ()
+        return tuple(
+            expanded for spawn in _GRIND_SPAWN_STEPS
+            for expanded in _expanded_steps(spawn, None if template else details)
+        )
+    if step.tool == _EACH_CARRYING_CASTING:
+        return _carrier_steps(None if template else details.get("grind_carriers"))
+    return (step,)
+
+
+#: What `_EACH_CARRYING_CASTING` renders to with no reading to name castings
+#: from: the template, and a run whose manifest names none.
+_CARRIER_TEMPLATE = _Step(
+    "Foundry-Spawn-Teammate", "casting_id=N, phase='grind'",
+    each="for each casting carrying open defects",
+)
+
+
+def _carrier_steps(carriers: object) -> tuple[_Step, ...]:
+    """The GRIND spawn door, once per casting the reading names. Total.
+
+    One step, not one per casting: the Agent step after it is made for every
+    casting it dispatched in one parallel message, and the structure audit
+    holds a door and its spawn adjacent. Its `each` names the castings and the
+    defects each carries, so the lead copies them; a routed defect says why
+    it is there (D-089).
+    """
+    rows = [
+        row for row in (carriers if isinstance(carriers, list) else ())
+        if isinstance(row, dict) and row.get("defects")
+        and _casting_ids([row.get("casting")])
+    ]
+    if not rows:
+        return (_CARRIER_TEMPLATE,)
+    named = []
+    for row in rows:
+        clause = f"casting_id={row['casting']} for {', '.join(row['defects'])}"
+        routed = [
+            f"{item['defect']} ({item['file'] or 'no file recorded'})"
+            for item in row.get("routed") or () if isinstance(item, dict)
+        ]
+        if routed:
+            clause += (
+                f" — no casting's key_files cover {', '.join(routed)}, so "
+                "this server routed it to this casting, the nearest by "
+                "directory and requirement, and it goes in this teammate's "
+                "defects block"
+            )
+        named.append(clause)
+    return (
+        _Step(
+            "Foundry-Spawn-Teammate", "casting_id=N, phase='grind'",
+            each=(
+                "once per casting named here, all in ONE parallel-tool-use "
+                "message: " + "; ".join(named)
+            ),
+        ),
+    )
+
+
+#: lead-stalls CT-002 / FR-002 — the teammates-live branch, for both audited
+#: actions. It names NO next call ON PURPOSE, in the same register as the
+#: `done` and `halted` terminals: "end your turn" IS the correct move here,
+#: and an imperative that named a tool call would be telling the lead to
+#: improvise over half-finished work. The survey counted `done` and `halted`
+#: among the 20 already-correct entries for naming NONE, which is the
+#: precedent.
+#:
+#: lead-stalls D-038 — the sentence says what "running" covers, because a
+#: ledger holding only its door's seed counts: under `_SPAWN_IS_ONE_MOVE` that
+#: teammate's Agent was made in the same move as the door.
+_SEED_COUNTS_AS_RUNNING = (
+    "A teammate whose ledger holds only the line its spawn door wrote counts "
+    "as running, because the door and its Agent call are one move. "
+)
+_CAST_TEAMMATES_LIVE = _Imperative((), (
+    "Your CAST teammates are running — this server read their progress "
+    "ledgers on this call and measured them advancing. "
+    + _SEED_COUNTS_AS_RUNNING + _WAITING_IS_NOT_STOPPING
+))
+
+_GRIND_TEAMMATES_LIVE = _Imperative((), (
+    "Your GRIND teammates are running — this server read their progress "
+    "ledgers on this call and measured them advancing. "
+    + _SEED_COUNTS_AS_RUNNING + _WAITING_IS_NOT_STOPPING
+))
+
+#: lead-stalls GI-008 / FR-007 (D-019) — `run_streams` IS THE THIRD ACTION
+#: WHOSE WORK IS AGENTS, AND THE ONE A LEAD RE-READS WHILE THEY RUN.
+#:
+#: Its streams are BACKGROUND agents, and every Foundry-Next taken while they
+#: worked found them unrecorded — they record at the END — and was handed
+#: "spawn every missing INSPECT stream" beside a CONTEXT naming the very
+#: streams already running. FR-007 is "fix any others found"; this is the
+#: other one, and it takes the same treatment.
+_STREAMS_RUNNING = _Imperative((), (
+    "Your INSPECT streams are running — this server read their progress "
+    "ledgers on this call and measured them advancing. A stream records "
+    "itself when it finishes, so an unrecorded stream that is running is not "
+    "missing, and spawning it again runs it twice over one cycle. "
+    + _WAITING_IS_NOT_STOPPING
+))
+
+#: lead-stalls GI-008 / FR-007 (D-056) — `add_castings` IS THE FOURTH ACTION
+#: WHOSE WORK IS AGENTS, AND IT READ NO ROSTER.
+#:
+#: The decomposition writers are BACKGROUND agents, one per domain, and their
+#: list ended in END YOUR TURN with a trailer saying the Foundry-Next "the last
+#: notification wakes you for" opens the validation. Every writer's
+#: notification wakes the lead, so the lead had to judge which one was the
+#: last — the conditional GI-008 forbids — and the router could not help it:
+#: F0 took no liveness reading, so the first writer's manifest entry turned
+#: the answer into `transition_to_cast` while the others were still writing.
+#: Driven, following that list validated one casting, crossed into F1 and
+#: dispatched wave 1 over a decomposition still in progress.
+#:
+#: So the writer keeps a progress ledger (the idle branch's prompt says where
+#: and how), F0 reads it through `_waiting_on_agents` like CAST and GRIND, and
+#: while it is advancing this branch answers END YOUR TURN. The ledger name is
+#: `decompose`, which no casting's ledger (`casting-<id>`) and no stream's can
+#: collide with.
+#:
+#: lead-stalls GI-008 / FR-007 (D-082) — AND THERE IS ONE WRITER, THE
+#: DECOMPOSER, WHOSE PROMPT IS LITERAL. The idle branch handed the lead a
+#: placeholder prompt "for each domain identified from the spec (1-5 of
+#: them)": the prompt, the domain split and so the number of calls were all
+#: the lead's to decide (see `_decomposer_steps`).
+_DECOMPOSITION_WRITERS_LIVE = _Imperative((), (
+    "Your decomposer is running — this server read its progress ledger on "
+    "this call and measured it advancing, so the castings manifest is not "
+    "finished yet. " + _WAITING_IS_NOT_STOPPING
+))
+
+_DECOMPOSITION_WRITERS = _Imperative(
+    (_Step(_DECOMPOSER), _YIELD),
+    "No team is needed: the decomposer is a short-lived file writer, so the "
+    "TeamCreate ceremony is skipped. Its return message is its TaskOutput, "
+    "and it keeps the progress ledger its prompt names, which is what the "
+    "Foundry-Next its completion notification wakes you for reads to tell a "
+    "finished decomposition from one still being written.",
+)
+
+
+#: The model clause every teammate spawn carries (test_model_config.py pins
+#: the deferral on both transition entries).
+_MODEL_CLAUSE = (
+    "For the model: obey the model clause in the `instructions` {door} "
+    "returned — this server owns that decision; never re-derive it here."
+)
+
+
+def _teammate_spawn(phase: str, each: str, door: str) -> _Step:
+    """The Agent step a spawn door feeds, for ``phase`` (D-038 / D-039)."""
+    return _Step(
+        "Agent",
+        "subagent_type='foundry:teammate', mode='bypassPermissions'",
+        each=each,
+        blocks=_SPAWN_PROMPT_ORDER[phase],
+        note=_SPAWN_IS_ONE_MOVE + " " + _MODEL_CLAUSE.format(door=door),
+    )
+
+
+_CAST_WAVE_SPAWN = _teammate_spawn(
+    "cast",
+    "for each returned casting, all in a SINGLE message (parallel tool use), "
+    "foreground, never run_in_background=true",
+    "Foundry-Cast-Wave",
+)
+
+#: lead-stalls CT-001 — the wave-complete branch: the literal calls, in order.
+#:
+#: `Foundry-Gate(phase='inspect')` is named here because the F1 arm returns
+#: `build_castings` for the WHOLE of F1 — `.cast-complete` is written BY the
+#: `cast` transition — so this branch is the only lead-facing surface for the
+#: F1 -> F2 crossing.
+#:
+#: lead-stalls D-013 — THE CLOSING SENTENCE ASSERTS A MEASUREMENT, AND IT IS
+#: TRUE ON EVERY PATH THAT REACHES IT. The only route here is `_branch_state`
+#: answering `idle`, which requires a measured `cast_wave_pending` of 0, and
+#: `_cast_wave_position` publishes 0 only after loading the manifest AND
+#: walking the ledger-derived done set. `refused` and `unaccepted` outrank
+#: `idle` (D-020), so the teardown is reached only once every done casting is
+#: also ACCEPTED.
+_CAST_WAVE_COMPLETE = _Imperative(
+    (
+        _Step("TeamDelete", each="for the CAST team"),
+        _Step(
+            "Foundry-Team-Down", "team_name='cast-{run}-wave-{built_wave}'",
+            note="the team this run registered for its last CAST wave",
+        ),
+        _Step("Foundry-Gate", "phase='inspect'"),
+        _Step(
+            "Foundry-Phase", "phase='cast'",
+            note=(
+                "the call that ENTERS F2. It sweeps the evidence corpus and "
+                "RECORDS this INSPECT's width and roster; editing state.json "
+                "by hand records no width at all, and every door that reads "
+                "one then refuses."
+            ),
+        ),
+    ),
+    "Every casting of every wave has declared itself done and no agent is "
+    "running — this server read the manifest and the progress ledgers on this "
+    "call — so the build is finished and the teardown is yours to make now."
+    + _GATE_THEN_PHASE_NOTE,
+)
+
+#: The dispatch state, which `fix_defects` has no equivalent of: a lead between
+#: `Foundry-Phase(phase='start_cast')` and its first Agent spawn stands in
+#: `build_castings` with nothing dispatched, and so does a lead at a wave
+#: boundary.
+#:
+#: lead-stalls D-003 — it serves that lead before AND after it registers the
+#: team, so step (1) is made unconditionally: a TeamCreate or Foundry-Team-Up
+#: that answers "already registered" costs a call, and step (3) is still where
+#: the dispatch begins.
+_CAST_WAVE_UNDISPATCHED = _Imperative(
+    (
+        _Step("TeamCreate", "'cast-{run}-wave-{wave}'"),
+        _Step("Foundry-Team-Up", "team_name='cast-{run}-wave-{wave}'"),
+        _Step(
+            "Foundry-Cast-Wave", "wave={wave}, phase='cast'",
+            note="returns ALL wave-{wave} dispatch blocks in ONE call",
+        ),
+        _CAST_WAVE_SPAWN,
+        _YIELD,
+    ),
+    "Wave {wave} is the LOWEST wave this server could place as still holding a "
+    "casting that has not declared itself done, so it is the wave to dispatch "
+    "and no wave beneath it is left open. Where the castings manifest answers, "
+    "that placement is read from it and from the progress ledgers on this "
+    "call; where it does not answer, the number falls back to wave 1 and step "
+    "(3) refuses and names the manifest rather than dispatching the wrong "
+    "wave. A TeamCreate or a Foundry-Team-Up that answers 'already registered' "
+    "has cost one call, and the dispatch still begins at step (3). A wave "
+    "whose door already returned reads here only once its seeds are stale — "
+    "no teammate wrote a line in the stall window — and that wave is "
+    "dispatched again.",
+)
+
+#: lead-stalls ST-004 / US-003 / D-020 — THE STATES BETWEEN A CASTING'S DONE
+#: LINE AND ITS WAVE BEING BUILT.
+#:
+#: `unaccepted`: done, and no verdict since. That is the ordinary state of a
+#: finished teammate AND the state a CALL-side refusal leaves (a stale spec
+#: hash records nothing), and both owe the same call made correctly.
+_CAST_ACCEPTANCE_DUE = _Imperative(
+    (
+        _Step(
+            "Foundry-Spec-Hash",
+            note="a fresh hash; acceptance refuses a stale one",
+        ),
+        _Step(
+            "Foundry-Accept-Casting",
+            "casting_id={casting}, spec_hash=<the hash step (1) returned>, "
+            "prompt_hash=<the sha256 casting {casting}'s teammate stated in "
+            "its completion report>, completion_report=<that report>, "
+            "casting_commit=<the full SHA of casting {casting}'s commit>",
+        ),
+        _Step(
+            "Foundry-Next",
+            note=(
+                "the call step (2) names on every path, accepted or refused; "
+                "the verdict it recorded is what that call reads"
+            ),
+        ),
+    ),
+    "Casting {casting} has declared itself done and holds no acceptance "
+    "verdict since — this server read the manifest, the progress ledgers and "
+    "handoffs.jsonl on this call, and no agent is running. Its wave is not "
+    "built until it is accepted, so neither a teardown nor the next wave is "
+    "yours to make yet.",
+)
+
+#: `refused` and `redispatch`: `Foundry-Accept-Casting` recorded `-refused`
+#: for this casting and its ledger has not moved since. The refusal goes to a
+#: TEAMMATE, as a message, never inside a CAST dispatch block. The resumed or
+#: re-spawned teammate writes its ledger again, and its next done line makes
+#: the refusal OLDER than the work, which routes the lead to accept again.
+#:
+#: lead-stalls D-022 — TWO BRANCHES, BECAUSE ONE BRANCH HELD A CONDITIONAL.
+#: The server chooses (`_acceptance_state`): with the refused casting's own
+#: wave team registered (D-031), the teammate that built it is sent the
+#: refusal; with it torn down, a fresh one is dispatched and sent the same
+#: refusal as a separate message.
+#:
+#: lead-stalls D-030 — the re-spawned teammate is handed its ledger protocol;
+#: the step renders the CAST order like every other spawn (D-039).
+_REFUSED_IS_REWORKED = (
+    "A refused casting is re-dispatched to be fixed: never torn down, never "
+    "counted as built, never re-accepted unchanged."
+)
+
+_REFUSAL_MESSAGE = (
+    "message=<the refusal Foundry-Accept-Casting returned for casting "
+    "{casting}, verbatim — its error or failure_token, failure_detail, warning "
+    "and hint>"
+)
+
+_CAST_REFUSED_SEND_BACK = _Imperative(
+    (
+        _Step(
+            "SendMessage",
+            "to=<the teammate you spawned for casting {casting}>, "
+            + _REFUSAL_MESSAGE,
+            note=(
+                "casting {casting} goes back to the teammate that built it, "
+                "which still holds its context, to fix what was refused and "
+                "report again."
+            ),
+        ),
+        _YIELD,
+    ),
+    "Foundry-Accept-Casting REFUSED casting {casting} and its ledger has not "
+    "moved since — this server read handoffs.jsonl, the progress ledgers and "
+    "the team registry on this call: no agent is running and casting "
+    "{casting}'s own wave team is still registered, so the teammate that built "
+    "it is the one to send it to. " + _REFUSED_IS_REWORKED,
+)
+
+_CAST_REFUSED_REDISPATCH = _Imperative(
+    (
+        _Step("Foundry-Spawn-Teammate", "casting_id={casting}, phase='cast'"),
+        _teammate_spawn(
+            "cast",
+            "for casting {casting} alone, foreground, never "
+            "run_in_background=true",
+            "step (1)",
+        ),
+        _Step(
+            "SendMessage",
+            "to=<the teammate step (2) spawned>, " + _REFUSAL_MESSAGE,
+            each="as a separate message",
+            note="the refusal never rides inside the dispatch",
+        ),
+        _YIELD,
+    ),
+    "Foundry-Accept-Casting REFUSED casting {casting} and its ledger has not "
+    "moved since — this server read handoffs.jsonl, the progress ledgers and "
+    "the team registry on this call: no agent is running and casting "
+    "{casting}'s own wave team is not registered, so the teammate that built "
+    "it went with that team and casting {casting} goes to a fresh one. "
+    + _REFUSED_IS_REWORKED,
+)
+
+
+#: The `fix_defects` idle branch, and its only one. With no agent running this
+#: action is emitted ONLY while blocking defects are open (lead-stalls D-017),
+#: so "no agent is running" always means the work is open and nobody is on
+#: it. Steps (1) and (2) cost nothing when no team is registered, which lets
+#: one list serve both the never-dispatched and the finished-with-work-open
+#: readings.
+_GRIND_SPAWN_STEPS = (
+    _Step("TeamCreate", "'grind-{run}-cycle-{cycle}'"),
+    _Step("Foundry-Team-Up", "team_name='grind-{run}-cycle-{cycle}'"),
+    _Step(_EACH_CARRYING_CASTING),
+    _teammate_spawn(
+        "grind",
+        "for each casting the step above dispatched, all in a SINGLE parallel "
+        "message, foreground, never run_in_background=true",
+        "Foundry-Spawn-Teammate",
+    ),
+    _YIELD,
+)
+
+_GRIND_DISPATCH = _Imperative(
+    (
+        _Step("TeamDelete", each="for this cycle's GRIND team"),
+        _Step(
+            "Foundry-Team-Down", "team_name='grind-{run}-cycle-{cycle}'",
+            note="clears any team still registered from a previous dispatch",
+        ),
+        _Step("Foundry-Tasks"),
+        *_GRIND_SPAWN_STEPS,
+    ),
+    "Blocking defects are open and no agent is running: this cycle's "
+    "teammates are yours to dispatch now.",
+)
+
+#: lead-stalls GI-008 / FR-007 (D-084) — THE ASSAYER IS TOLD THE DOOR ITS
+#: VERDICTS GO THROUGH. The F4 arm leaves ASSAY on what verdicts.json holds,
+#: and only Foundry-Verdict writes that ledger. The prompt said nothing of it,
+#: and `agents/assayer.md` returns its ASSAY verdicts as a JSON report, so the
+#: four dispatches recorded nothing: an empty ledger left F4 on PROVE's
+#: synthesized rows, a carried one filed cycles-old verdicts as LIVE, and the
+#: CONTEXT's "each assayer records its verdicts through the Foundry-Verdict
+#: door" was true of no surface. The one way left was for the lead to turn
+#: four reports into verdict calls no step named, which is FR-007's judgment
+#: task. One step, shared by both ASSAY lists, so the two cannot drift.
+_ASSAYER_DISPATCH = _Step(
+    "Agent",
+    "subagent_type='foundry:assayer', prompt='Assay requirement group N of 4 "
+    "for the active foundry run. Spec-before-code; default posture is find "
+    "the failure. Record every requirement you judge with one Foundry-Verdict "
+    "call carrying requirement_id, verdict, evidence, spec_text_cited and "
+    "code_location: that door writes verdicts.json, the ledger the next "
+    "Foundry-Next reads to serve the exit from ASSAY, and a verdict that is "
+    "only in your report reaches no ledger.'",
+    each="four times, N = 1 to 4, all in a SINGLE message",
+)
+
+
+_IMPERATIVES: dict[str, _Imperative | dict[str, _Imperative]] = {
+    "init": _Imperative(
+        (_Step("Foundry-Init", note="start a new run"),),
+    ),
     # fallout FR-035 / AC-054 / CT-007: the one action whose imperative is to
-    # STOP. The generic
-    # fallback header says "Execute the first tool call mentioned. Do not
-    # deliberate.", which on a halted run would push the lead straight back into
-    # the loop the cap ended — so this action gets an explicit entry.
+    # STOP. The generic fallback header says "Execute the first tool call
+    # mentioned. Do not deliberate.", which on a halted run would push the
+    # lead straight back into the loop the cap ended.
     #
     # fallout US-006 (D-147): `{halt_cause}` is substituted from the RECORDED
-    # reason member. Unlike `{gate}` / `{token}`, an unresolved `{halt_cause}`
-    # may NOT fall back to the generic header — that header says "Execute the
-    # first tool call mentioned. Do not deliberate.", which is the exact push
-    # back into the loop this entry exists to stop — so `_halt_cause` is total
-    # over every input and always resolves.
-    "halted": (
-        "YOUR NEXT CALL: NONE. This run is HALTED — {halt_cause}. The report is "
-        "generated. Do NOT dispatch a wave, do NOT call Foundry-Phase, do NOT "
-        "call Foundry-Next in a loop. Read REPORT.md, tell the user what "
-        "remains open by tier, and stop."
-    ),
-    "cleanup_teams": (
-        "YOUR NEXT CALLS (in order \u2014 do NOT wait for shutdown acks):\n"
-        "  (1) Send shutdown to each teammate: SendMessage(to=<teammate>, message='All work complete, stop working.') "
-        "\u2014 one SendMessage per teammate in ONE parallel-tool-use message. Do not use structured messages with "
-        "to='*' broadcast \u2014 broadcast rejects structured payloads.\n"
-        "  (2) Immediately call TeamDelete for each active team. Do NOT wait for 'shutdown_response' events, "
-        "'shutdown_ack' events, idle confirmations, or any teammate reply. Idle / terminated panes ARE the "
-        "shutdown signal. TeamDelete cleans zombie panes.\n"
-        "  (3) Foundry-Team-Down for each team name.\n"
-        "Stalling here is the #1 cleanup failure mode: the lead sends shutdown, sees panes idle, and waits "
-        "forever for a reply that never comes."
-    ),
-    "add_castings": (
-        "YOUR NEXT CALL: Spawn 1-5 BACKGROUND Agents in a SINGLE parallel message \u2014 one per "
-        "domain identified from the spec. Per-Agent params: model='opus', "
-        "subagent_type='general-purpose', mode='bypassPermissions', run_in_background=true, "
-        "prompt=<per commands/start.md \u00a7F0.5 DECOMPOSE: write the domain's entry into "
-        "manifest.json AND write casting-{id}-prompt.md to foundry-archive/{run}/castings/ "
-        "following the layout in start.md \u00a76>. "
-        "No team needed \u2014 these are short-lived file writers; TeamCreate ceremony is skipped. "
-        "You'll be notified as each completes; use TaskOutput(task_id) to retrieve any return "
-        "message. After all complete, call Foundry-Validate-Castings."
-    ),
-    "transition_to_cast": (
-        "YOUR NEXT CALLS (in order — bulk flow saves N-1 roundtrips):\n"
-        "  (1) Foundry-Gate(phase='validate')\n"
-        "  (2) Foundry-Phase(phase='start_cast')\n"
-        "  (3) TeamCreate('cast-{run}-wave-1')\n"
-        "  (4) Foundry-Team-Up(team_name='cast-{run}-wave-1')\n"
-        "  (5) Foundry-Cast-Wave(wave=1, phase='cast') \u2014 returns ALL wave-1 dispatch blocks in ONE call.\n"
-        "  (6) In a SINGLE message (parallel tool use), spawn one Agent per returned casting: "
-        "subagent_type='foundry:teammate', mode='bypassPermissions', "
-        "prompt=<that casting's `dispatch` field VERBATIM \u2014 it names the prompt FILE and the "
-        "sha256 the teammate must read that file to obtain. The `prompt` field is null by "
-        "default and is NOT what you pass; do not paste, summarise or augment the prompt text "
-        "yourself>. "
-        "For the model: obey the model clause in the `instructions` Foundry-Cast-Wave just "
-        "returned \u2014 it names the model to pass when the foundry `model` option is configured "
-        "(foundry:teammate follows that option) and tells you to pass no model parameter when it "
-        "is not. This server owns that decision; never re-derive it here. (foundry:teammate's "
-        "frontmatter carries effort=xhigh + all tools.) "
-        "Do NOT send multiple messages with one Agent each \u2014 that serializes what should be parallel.\n"
-        "Rules still apply: NEVER run_in_background=true for foundry:teammate. NEVER "
-        "subagent_type='Explore' or 'general-purpose' for CAST. F0.5 DECOMPOSE uses background "
-        "general-purpose Agents; F2 INSPECT and F4 ASSAY use named agents (foundry:tracer, "
-        "foundry:assayer, foundry:research-auditor, foundry:coverage-diff) whose frontmatter "
-        "carries model/effort/tools." + _GATE_THEN_PHASE_NOTE
-    ),
-    "build_castings": (
-        "YOUR NEXT ACTION depends on wave state:\n"
-        "  - IF no CAST team has been registered this wave yet (first entry to F1): follow the transition_to_cast sequence "
-        "(TeamCreate \u2192 Foundry-Team-Up \u2192 Foundry-Spawn-Teammate per casting \u2192 Agent spawn VERBATIM, foreground).\n"
-        "  - IF teammates are currently running: WAIT for all to complete, then TeamDelete + Foundry-Team-Down + "
-        "Foundry-Phase(phase='cast'). Do NOT call Foundry-Next while waiting \u2014 it will re-emit this action."
-    ),
-    # fallout D-058 / AC-059 — ONE ACTION, TWO CROSSINGS, AND THE STEPS ARE
-    # SUBSTITUTED FROM ONE ROW SO THEY CANNOT NAME DOORS THAT DO NOT MATCH.
+    # reason member through `_halt_cause`, which is total, so it never falls
+    # back to the generic header.
     #
-    # This named `Foundry-Gate(phase='inspect')` above
-    # `Foundry-Phase(phase='inspect_start')` — a pair refused at BOTH emission
-    # sites, because that gate guards the `cast` transition and the call is
-    # `inspect_start`. From F3 the gate is refused ("accepted from F1 and from
-    # nowhere else"); from F1 the phase call is ("accepted from F3, and from
-    # F2"). Its explanatory tail was F3's, printed verbatim to a lead standing in
-    # F1 about a transition F1 does not take.
+    # lead-stalls GI-008 / FR-007 — and the report the halt could not write is
+    # a served step, not a sentence in the CONTEXT (see `_UNWRITTEN_REPORT`).
+    # With it written the list is empty and this reads NONE, as it always did.
+    "halted": _Imperative((_Step(_UNWRITTEN_REPORT),), (
+        "This run is HALTED — {halt_cause}. Do NOT dispatch a wave, do NOT "
+        "call Foundry-Phase, do NOT call Foundry-Next in a loop. Read "
+        "REPORT.md, tell the user what remains open by tier, and stop."
+    )),
+    "cleanup_teams": _Imperative(
+        (
+            _Step(
+                "SendMessage",
+                "to=<teammate>, message='All work complete, stop working.'",
+                each="for each teammate, all in ONE parallel-tool-use message",
+                note=(
+                    "never a structured message with to='*' broadcast, which "
+                    "rejects structured payloads"
+                ),
+            ),
+            _Step(
+                "TeamDelete",
+                each="for each active team, immediately",
+                note=(
+                    "idle / terminated panes ARE the shutdown signal, and "
+                    "TeamDelete cleans zombie panes"
+                ),
+            ),
+            _Step("Foundry-Team-Down", each="for each team name"),
+        ),
+        "Do NOT wait for 'shutdown_response' events, 'shutdown_ack' events, "
+        "idle confirmations, or any teammate reply. Stalling here is the #1 "
+        "cleanup failure mode: the lead sends shutdown, sees panes idle, and "
+        "waits forever for a reply that never comes.",
+    ),
+    # lead-stalls FR-007 — the validation "after all complete" is no longer a
+    # step behind a wait: the yield ends this list, and `transition_to_cast`,
+    # which is what the woken Foundry-Next answers, opens with it.
     #
-    # `{gate}` and `{token}` come from ONE `_ACTION_CROSSINGS` row, chosen by the
-    # phase the action was emitted from, so step (1) and step (2) are two fields
-    # of one fact rather than two strings that have to be kept in agreement. The
-    # phase-specific detail — what THIS crossing also does — is already on the
-    # branch's own `instructions`, which is where it belongs: this header's job
-    # is the two call names.
-    "transition_to_inspect": (
-        "YOUR NEXT CALLS (in order):\n"
-        "  (1) Foundry-Gate(phase='{gate}')\n"
-        "  (2) Foundry-Phase(phase='{token}') — the transition that OPENS this "
-        "INSPECT, and the gate above is the one that guards it. That call sweeps "
-        "the evidence corpus and RECORDS this INSPECT's width and the roster "
-        "every stream then runs; from F3 it also advances the server-side cycle "
-        "counter, so skipping it files the next cycle's stream records, defects "
-        "and roll-up entries under the last one and the recurring-class "
-        "escalation never accumulates. Editing state.json by hand records no "
-        "width at all, and every door that reads one then refuses."
-        + _GATE_THEN_PHASE_NOTE
+    # lead-stalls GI-008 / FR-007 (D-056) — and WHICH woken Foundry-Next that
+    # is, is the server's reading, not the lead's count of notifications:
+    # branched like the other three agent-running actions, on the writers'
+    # own progress ledgers.
+    "add_castings": {
+        "live": _DECOMPOSITION_WRITERS_LIVE,
+        "idle": _DECOMPOSITION_WRITERS,
+    },
+    # lead-stalls D-009 — the literal `1` is correct here: `_compute_next_action`
+    # returns this action from F0 and from nowhere else, so the only wave it
+    # describes is the first. `build_castings`'s dispatch branch carries the
+    # slot for every later wave.
+    "transition_to_cast": _Imperative(
+        (
+            _Step(
+                "Foundry-Validate-Castings",
+                note="the check of what the decomposition wrote",
+            ),
+            _Step("Foundry-Gate", "phase='validate'"),
+            _Step("Foundry-Phase", "phase='start_cast'"),
+            _Step("TeamCreate", "'cast-{run}-wave-1'"),
+            _Step("Foundry-Team-Up", "team_name='cast-{run}-wave-1'"),
+            _Step(
+                "Foundry-Cast-Wave", "wave=1, phase='cast'",
+                note="returns ALL wave-1 dispatch blocks in ONE call",
+            ),
+            _CAST_WAVE_SPAWN,
+            _YIELD,
+        ),
+        "(foundry:teammate's frontmatter carries effort=xhigh + all tools.) "
+        "Do NOT send multiple messages with one Agent each — that serializes "
+        "what should be parallel.\n"
+        "Rules still apply: NEVER run_in_background=true for foundry:teammate. "
+        "NEVER subagent_type='Explore' or 'general-purpose' for CAST. F0.5 "
+        "DECOMPOSE uses background general-purpose Agents; F2 INSPECT and F4 "
+        "ASSAY use named agents (foundry:tracer, foundry:assayer, "
+        "foundry:research-auditor, foundry:coverage-diff) whose frontmatter "
+        "carries model/effort/tools." + _GATE_THEN_PHASE_NOTE,
     ),
-    "run_streams": (
-        "YOUR NEXT CALLS: spawn every missing INSPECT stream in a SINGLE parallel message. Stream-specific rules:\n"
-        "All four streams spawn as BACKGROUND Agents (run_in_background=true) so SIGHT can run "
-        "concurrently in the main thread instead of the main thread blocking on tool_results:\n"
-        "  - TRACE: Agent(subagent_type='foundry:tracer', run_in_background=true, prompt='Run TRACE wiring verification for the active foundry run.')\n"
-        "  - PROVE: Agent(subagent_type='foundry:assayer', run_in_background=true, prompt='Run PROVE (spec-to-code citation verification) for the active foundry run.')\n"
-        "  - RESEARCH_AUDIT: Agent(subagent_type='foundry:research-auditor', run_in_background=true, prompt='Run RESEARCH_AUDIT for the active foundry run.')\n"
-        "  - COVERAGE_DIFF (MIGRATION only): Agent(subagent_type='foundry:coverage-diff', run_in_background=true, prompt='Run COVERAGE_DIFF for the active foundry run.')\n"
-        "  - SIGHT: runs in MAIN THREAD via Playwright \u2014 execute while the four background streams run\n"
-        "  - TEST / PROBE: may also run as background Agents\n"
-        "When each background stream's completion notification fires: call TaskOutput(task_id) "
-        "to retrieve its findings, then CONFIRM THE STREAM'S OWN RECORD EXISTS \u2014 "
-        "Foundry-Context shows the cycle's roll-up. Do NOT poll \u2014 the harness notifies you.\n"
-        "\n"
-        # fallout AC-031 / GI-016 / FR-049 (D-169) \u2014 THE READING STREAMS ARE
-        # TOLD THAT ONE OF THEIR PEERS REWRITES THE TREE.
-        #
-        # This imperative dispatches every stream in ONE parallel message and
-        # named no ordering, no exclusion and no snapshot discipline \u2014 while
-        # TEST verifies a GRIND's fixes by REVERTING each one and re-running,
-        # in the shared working tree the reading streams are walking.
-        #
-        # DRIVEN in cycle 5 of this run by following the imperative literally:
-        # TRACE hit an AttributeError that did not reproduce at HEAD, and
-        # independently reported the tree churning between 04:20 and 04:26 UTC
-        # with `tools/foundry_validate.py` showing a PRE-bac2c12 state and six
-        # orchestration modules modified, before settling clean. It recovered
-        # ONLY because it re-verified everything against a `git archive HEAD`
-        # snapshot on its own initiative and pinned its findings to 13164ab.
-        # Nothing here required that recovery or would have caught its absence:
-        # a stream that trusted the tree would have filed a phantom defect
-        # against a mutation a peer was about to revert, or missed a real one
-        # masked by it, and neither is distinguishable in the ledger from an
-        # honest finding.
-        #
-        # Same shared-mutable-state family as D-155 (concurrent evidence
-        # recapture), one rung in: there the racing writers were recapture
-        # teammates, here they are the verification streams this imperative
-        # dispatches together. Named rather than serialised, per GI-007: the
-        # parallel dispatch is what makes an INSPECT one wall-clock unit, and
-        # the hazard is answered by telling every reader to pin.
-        "THE TREE MOVES UNDER YOU WHILE THESE RUN. TEST verifies a GRIND's "
-        "fixes by REVERTING each one and re-running, in the same working tree "
-        "TRACE and PROVE are reading. Tell every reading stream, in its own "
-        "dispatch, to PIN ITS WORK TO A SNAPSHOT: take the HEAD sha once at "
-        "start, verify findings against `git archive HEAD` (or an equivalent "
-        "detached checkout) rather than the live tree, and cite that sha in "
-        "the report. A finding read off the live tree during an INSPECT may be "
-        "a peer's mutation that is about to be reverted, and that is "
-        "indistinguishable in the ledger from an honest one.\n"
-        "\n"
-        "fallout FR-023 / FR-049 / GI-016 \u2014 YOU DO NOT RECORD A STREAM. THE AGENT "
-        "DOES.\n"
-        "Every verifying stream calls Foundry-Stream itself, with the counts it "
-        "actually measured, and a second record for the same (stream, cycle) "
-        "REPLACES the first rather than summing with it. A lead that records on "
-        "an agent's behalf is asserting numbers it did not measure, and when the "
-        "agent then records its own the cycle carries two accounts of one run. "
-        "If an AGENT stream finished and no record exists, that is a finding "
-        "about the stream \u2014 re-dispatch it, or file it \u2014 not a gap for you to "
-        "fill in.\n"
-        # fallout AC-031 / GI-016 / AC-030 (D-165) \u2014 AND THE ONE STREAM WHOSE
-        # EXECUTOR IS YOU.
-        #
-        # The rule above is sound and AC-030 requires its wording, but stated
-        # unqualified it closed every exit SIGHT has. SIGHT runs in the lead's
-        # own thread \u2014 `commands/start.md`'s F2 roster calls it "the only
-        # exception to 'lead never does work'", and Playwright MCP works
-        # nowhere else \u2014 so it has no agent to re-dispatch and this same
-        # imperative forbids spawning one. Meanwhile `skills/sight/SKILL.md`,
-        # which the lead is executing, says "Mark the stream complete via the
-        # foundry MCP `Foundry-Stream` tool with `stream='sight'`" and "You
-        # record your own stream". So on a --url run the lead executed the
-        # skill, read this imperative, and every exit was closed: with no sight
-        # record the streams-complete rung stays short and
-        # `Foundry-Phase('inspect_clean')` refuses with no sanctioned move \u2014 a
-        # STALLED INSPECT rather than a wrong number.
-        #
-        # What GI-016 protects is that nobody reports numbers they did not
-        # measure. The lead driving Playwright MEASURED them. So the rule is
-        # stated as what it is \u2014 never on an AGENT's behalf \u2014 and the one
-        # stream the lead executes is named with its reason, which is the
-        # sentence that was missing rather than a carve-out.
-        "\n"
-        "SIGHT IS THE ONE STREAM YOU EXECUTE, SO YOU ARE ITS EXECUTOR AND ITS "
-        "RECORD IS YOURS. Playwright runs only in the main thread; there is no "
-        "sight agent to re-dispatch and you must not spawn one. When you have "
-        "driven the sight skill, the numbers you report are numbers YOU "
-        "measured, which is the whole of what the rule above protects \u2014 it "
-        "forbids recording on an AGENT's behalf, and there is no agent here. "
-        "Every OTHER stream records its own and you only confirm."
-    ),
-    "transition_to_grind": (
-        "YOUR NEXT CALLS (in order):\n"
-        "  (1) Foundry-Tasks\n"
-        "  (2) Foundry-Gate(phase='grind')\n"
-        "  (3) Foundry-Phase(phase='grind_start')\n"
-        "  (4) TeamCreate('grind-{run}-cycle-N')\n"
-        "  (5) Foundry-Team-Up(team_name='grind-{run}-cycle-N')\n"
-        "  (6) For each casting with open defects: Foundry-Spawn-Teammate(casting_id=N, phase='grind')\n"
-        "  (7) Spawn Agent(subagent_type='foundry:teammate', mode='bypassPermissions', "
-        "prompt=<the returned `dispatch` field VERBATIM \u2014 it names the prompt FILE and the sha256 the "
-        "teammate must read that file to obtain; the `prompt` field is null by default and is NOT what "
-        "you pass. Then APPEND (a) the `grind_cycle_context` block from the spawn "
-        "response if present \u2014 lists files changed in prior cycles so the teammate reads current state "
-        "before acting, then (b) the defect list in a '## Defects to fix this cycle:' block, "
-        # fallout FR-038 / GI-021 / CT-008 / AC-002 \u2014 THE ALIGNMENT BLOCK REACHES
-        # THE PROMPT THROUGH THE STEP THAT BUILDS IT.
-        #
-        # `Foundry-Tasks` computes the block correctly and named it to
-        # nobody: grep over src/, tests/, commands/ and agents/ returned
-        # its definition, its one assignment and one test assertion, and
-        # no consumer at all. FR-038 ends "the lead pastes it verbatim
-        # into the dispatch prompt", and the lead pastes what THIS
-        # imperative names \u2014 which is how `grind_cycle_context` and
-        # `progress_protocol` already reach a teammate. Step (1) of this
-        # same sequence is the Foundry-Tasks call the block comes back on,
-        # so nothing has to be remembered between calls.
-        "then (c) that task's `alignment_block` from the Foundry-Tasks result of step (1), "
-        "VERBATIM, whenever the task carries one \u2014 it is server-generated and names the "
-        "originating defects, the requirement ids, the owning casting and file of the fix, and "
-        "the sibling files THIS casting owns that cite those ids, which is how one fix reaches "
-        "every surface of its rule in the same GRIND. Do not summarise it and do not compose "
-        "your own. "
-        "Order: dispatch \u2192 cycle_context \u2192 defects \u2192 alignment. "
-        "All appended BELOW the dispatch block, never inside it.>). "
-        "Same foreground rule as CAST \u2014 never background-spawn GRIND teammates. "
-        "For the model: obey the model clause in the `instructions` Foundry-Spawn-Teammate "
-        "returned \u2014 pass the model it names, or no model parameter when it names none. This "
-        "server owns that decision; never re-derive it here." + _GATE_THEN_PHASE_NOTE
-    ),
-    # fallout D-059 / GI-001 / AC-059 — AND THE THREE ARMS THAT REACHED
-    # `inspect_start` WITHOUT NAMING ITS GATE.
+    # lead-stalls FR-001 / FR-002 / FR-015 / GI-008 / CT-001 / CT-002 — THE
+    # LEAD RECEIVES ONE OF THESE, NEVER THE CHOICE BETWEEN THEM.
     #
-    # GI-001's violation column reads "a casting that ... lets a transition skip
-    # its gate". AC-059 added `inspect_start` to `GATE_TO_TRANSITION` precisely
-    # so that crossing would have one, and these three told the lead to make the
-    # transition call with no gate before it — so the token existed and no
-    # lead-facing surface named it. Each now names `Foundry-Gate(phase=
-    # 'inspect_start')` first, which is the same pair `transition_to_inspect`'s
-    # F3 half carries; the lead reaching this crossing by any of the four routes
-    # is told to make the same two calls in the same order.
-    "fix_defects": (
-        "YOUR NEXT ACTION depends on GRIND state:\n"
-        "  - IF no GRIND team registered yet: follow the transition_to_grind sequence.\n"
-        "  - IF teammates are running: WAIT. When all report complete, TeamDelete + Foundry-Team-Down + "
-        "Foundry-Gate(phase='inspect_start') + Foundry-Phase(phase='inspect_start') + re-run INSPECT."
-        + _GATE_THEN_PHASE_NOTE
+    # This read "YOUR NEXT ACTION depends on wave state:" over two `IF` arms.
+    # `_waiting_on_agents` already knew the answer, so it is read at emission
+    # and one branch is chosen by the server that can measure the condition.
+    # lead-stalls ST-004 / D-020 / D-022 add the acceptance branches, chosen
+    # from the verdict `Foundry-Accept-Casting` records and only while no agent
+    # is running (`_branch_states`).
+    "build_castings": {
+        "live": _CAST_TEAMMATES_LIVE,
+        "idle": _CAST_WAVE_COMPLETE,
+        "undispatched": _CAST_WAVE_UNDISPATCHED,
+        "refused": _CAST_REFUSED_SEND_BACK,
+        "redispatch": _CAST_REFUSED_REDISPATCH,
+        "unaccepted": _CAST_ACCEPTANCE_DUE,
+    },
+    # fallout D-058 / AC-059 — ONE ACTION, TWO CROSSINGS: `{gate}` and
+    # `{token}` come from ONE `_ACTION_CROSSINGS` row chosen by the emitting
+    # phase, so step (1) and step (2) are two fields of one fact.
+    "transition_to_inspect": _Imperative(
+        (
+            _Step("Foundry-Gate", "phase='{gate}'"),
+            _Step(
+                "Foundry-Phase", "phase='{token}'",
+                note=(
+                    "the transition that OPENS this INSPECT, and the gate "
+                    "above is the one that guards it. That call sweeps the "
+                    "evidence corpus and RECORDS this INSPECT's width and the "
+                    "roster every stream then runs; from F3 it also advances "
+                    "the server-side cycle counter, so skipping it files the "
+                    "next cycle's stream records, defects and roll-up entries "
+                    "under the last one and the recurring-class escalation "
+                    "never accumulates. Editing state.json by hand records no "
+                    "width at all, and every door that reads one then refuses."
+                ),
+            ),
+        ),
+        _GATE_THEN_PHASE_NOTE.lstrip("\n"),
     ),
-    "transition_to_assay": (
-        "YOUR NEXT CALLS (in order):\n"
-        "  (1) Foundry-Phase(phase='inspect_clean')\n"
-        "  (2) Foundry-Gate(phase='assay')\n"
-        "  (3) Update state to F4\n"
-        "  (4) Spawn 4 parallel Agent(subagent_type='foundry:assayer', "
-        "prompt='Assay requirement group N of 4 for the active foundry run. "
-        "Spec-before-code; default posture is find the failure.') in a SINGLE message. "
-        "(The assayer's frontmatter carries model=opus and effort=max.)"
-    ),
-    "run_assay": (
-        "YOUR NEXT CALL: spawn 4 parallel Agent(subagent_type='foundry:assayer', "
-        "prompt='Assay requirement group N of 4 for the active foundry run. "
-        "Spec-before-code; default posture is find the failure.') in a SINGLE message. "
-        "Each reads the spec FIRST, forms expectations, then reads code. "
-        "(The assayer's frontmatter carries model=opus and effort=max.)"
-    ),
-    # fallout FR-035 / AC-054 — THE F6 ORDER, STATED EXACTLY.
+    # lead-stalls GI-008 / FR-007 (D-019, D-040) — branched like the two
+    # audited actions, and its idle steps are the recorded roster's.
+    "run_streams": {
+        "live": _STREAMS_RUNNING,
+        "idle": _Imperative(
+            (_Step(_EACH_UNRECORDED_STREAM),),
+            "Each Agent step above is a stream this INSPECT's recorded roster "
+            "requires and that has no record this cycle — the CONTEXT below "
+            "lists the same streams — and the Agent steps go out together in "
+            "ONE parallel message as BACKGROUND agents, so SIGHT can run in "
+            "the main thread meanwhile. A stream that finished without its "
+            "own record is in that list, because its own re-run is the one "
+            "thing that records it. A stream's completion notification is the "
+            "wake, and Foundry-Context shows the cycle's roll-up, which is "
+            "where a stream's own record is confirmed.\n"
+            "\n"
+            # fallout AC-031 / GI-016 / FR-049 (D-169) — THE READING STREAMS
+            # ARE TOLD THAT ONE OF THEIR PEERS REWRITES THE TREE. Driven in
+            # cycle 5 of that run, TRACE hit an AttributeError that did not
+            # reproduce at HEAD while TEST was reverting fixes in the shared
+            # tree. Named rather than serialised, per GI-007: the parallel
+            # dispatch is what makes an INSPECT one wall-clock unit. D-040
+            # moved the order to pin INTO each reading stream's prompt.
+            "THE TREE MOVES UNDER YOU WHILE THESE RUN. TEST verifies a "
+            "GRIND's fixes by REVERTING each one and re-running, in the same "
+            "working tree TRACE and PROVE are reading, so every reading "
+            "stream's prompt above tells it to PIN ITS WORK TO A SNAPSHOT and "
+            "cite that sha. A finding read off the live tree during an INSPECT "
+            "may be a peer's mutation that is about to be reverted, and that "
+            "is indistinguishable in the ledger from an honest one.\n"
+            "\n"
+            "fallout FR-023 / FR-049 / GI-016 — YOU DO NOT RECORD A STREAM. "
+            "THE AGENT DOES.\n"
+            "Every verifying stream calls Foundry-Stream itself, with the "
+            "counts it actually measured, and a second record for the same "
+            "(stream, cycle) REPLACES the first rather than summing with it. "
+            "A lead that records on an agent's behalf is asserting numbers it "
+            "did not measure, and when the agent then records its own the "
+            "cycle carries two accounts of one run.\n"
+            # fallout AC-031 / GI-016 / AC-030 (D-165) — AND THE ONE STREAM
+            # WHOSE EXECUTOR IS YOU. SIGHT runs in the lead's own thread, so
+            # the rule above, stated unqualified, closed every exit it had.
+            "\n"
+            "SIGHT IS THE ONE STREAM YOU EXECUTE, SO YOU ARE ITS EXECUTOR AND "
+            "ITS RECORD IS YOURS. Playwright runs only in the main thread; "
+            "there is no sight agent to re-dispatch and you must not spawn "
+            "one. When you have driven the sight skill, the numbers you "
+            "report are numbers YOU measured, which is the whole of what the "
+            "rule above protects — it forbids recording on an AGENT's behalf, "
+            "and there is no agent here. Every OTHER stream records its own "
+            "and you only confirm.",
+        ),
+    },
+    # lead-stalls GI-008 / FR-007 (D-055) — the dispatch is a slot, so the
+    # clean-cycle GRIND a held escalation owes is this list without it.
     #
-    # This read "YOUR NEXT CALL: Foundry-Phase(phase='done')", which contradicts
-    # the sequence the doors actually enforce: the DONE evaluation REQUIRES the
-    # generated report, and it sweeps the committed evidence corpus — so a lead
-    # that stripped `evidence/` before generating the report is refused for a
-    # missing document, and one that strips AFTER the gate passes has changed
-    # the tree the gate judged. Report, Gate, strip, Phase, in that order, is
-    # the only sequence in which each step's precondition is still true when the
-    # next one runs.
-    "transition_to_done": (
-        "YOUR NEXT CALLS (in order, and the order is the whole of it):\n"
-        "  (1) Foundry-Report — DONE is refused without the generated report, "
-        "and it is generated, never hand-written.\n"
-        "  (2) Foundry-Gate(phase='done') — this is where the evidence corpus is "
-        "re-executed at HEAD. It must pass BEFORE the strip, on the tree the "
-        "corpus was captured against.\n"
-        "  (3) `git rm -r --cached evidence/ && rm -rf evidence/` then commit — "
-        "the strip, AFTER the gate has judged the corpus and not before.\n"
-        "  (4) Foundry-Phase(phase='done') — seals F6, carries your appended "
-        "prose into the report and archives the run.\n"
+    # lead-stalls GI-008 / FR-007 (D-081) — and so is the filing a nyquist
+    # auditor's escalation owes, which opens the list the F5.5 arm serves for
+    # it and expands to nothing everywhere else (`_EACH_UNFILED_ESCALATION`).
+    "transition_to_grind": _Imperative(
+        (
+            _Step(_EACH_UNFILED_ESCALATION),
+            _Step("Foundry-Tasks"),
+            _Step("Foundry-Gate", "phase='grind'"),
+            _Step("Foundry-Phase", "phase='grind_start'"),
+            _Step(_BLOCKING_DISPATCH),
+        ),
+        # fallout FR-038 / GI-021 / CT-008 / AC-002 — the alignment block
+        # reaches the prompt through the step that builds it: step (1) is the
+        # Foundry-Tasks call the block comes back on.
+        "Same foreground rule as CAST: GRIND teammates are never "
+        "background-spawned." + _GATE_THEN_PHASE_NOTE,
+    ),
+    # lead-stalls FR-015 / GI-008 / CT-003 / CT-008 — THE SAME TREATMENT AS
+    # `build_castings`, AND THE BARE `WAIT.` IS GONE. With nobody running this
+    # action is emitted only while blocking defects are open, and the crossing
+    # the old arm trailed belongs to `transition_to_inspect`.
+    "fix_defects": {
+        "live": _GRIND_TEAMMATES_LIVE,
+        "idle": _GRIND_DISPATCH,
+    },
+    # lead-stalls FR-007 — this read "(1) Foundry-Phase(phase='inspect_clean')
+    # (2) Foundry-Gate(phase='assay') (3) Update state to F4": the gate after
+    # the transition it guards (GATE_TO_TRANSITION maps `assay` to
+    # `inspect_clean`), and a third step naming no tool at all. The
+    # transition itself is what enters F4.
+    "transition_to_assay": _Imperative(
+        (
+            _Step("Foundry-Gate", "phase='assay'"),
+            _Step(
+                "Foundry-Phase", "phase='inspect_clean'",
+                note="the transition that enters F4 (ASSAY)",
+            ),
+            _ASSAYER_DISPATCH,
+        ),
+        "The assayer's frontmatter carries model=opus and effort=max."
+        + _GATE_THEN_PHASE_NOTE,
+    ),
+    "run_assay": _Imperative(
+        (_ASSAYER_DISPATCH,),
+        "Each reads the spec FIRST, forms expectations, then reads code. The "
+        "assayer's frontmatter carries model=opus and effort=max.",
+    ),
+    # fallout FR-035 / AC-054 — THE F6 ORDER, STATED EXACTLY. The DONE
+    # evaluation REQUIRES the generated report and sweeps the committed
+    # evidence corpus, so Report, Gate, strip, Phase is the only order in
+    # which each step's precondition still holds when the next one runs.
+    "transition_to_done": _Imperative(
+        (
+            _Step(
+                "Foundry-Report",
+                note=(
+                    "DONE is refused without the generated report, and it is "
+                    "generated, never hand-written."
+                ),
+            ),
+            _Step(
+                "Foundry-Gate", "phase='done'",
+                note=(
+                    "this is where the evidence corpus is re-executed at HEAD. "
+                    "It must pass BEFORE the strip, on the tree the corpus was "
+                    "captured against."
+                ),
+            ),
+            _Step(
+                "Bash",
+                "command='git rm -r --cached evidence/ && rm -rf evidence/'",
+                note="the strip, AFTER the gate has judged the corpus and not before.",
+            ),
+            _Step(
+                "Bash",
+                "command='git commit -m \"chore: strip the evidence corpus\"'",
+                note="commits the strip.",
+            ),
+            _Step(
+                "Foundry-Phase", "phase='done'",
+                note=(
+                    "seals F6, carries your appended prose into the report and "
+                    "archives the run."
+                ),
+            ),
+        ),
         "Stripping before (2) refuses the gate for a corpus that is no longer "
-        "there; stripping after (4) leaves the run sealed against a tree that "
-        "no longer exists." + _GATE_THEN_PHASE_NOTE
+        "there; stripping after (5) leaves the run sealed against a tree that "
+        "no longer exists." + _GATE_THEN_PHASE_NOTE,
     ),
-    # fallout FR-035 / AC-054 — THE NINE THE SURVEY COUNTED.
+    # fallout FR-035 / AC-054 — the nine the survey counted, each of which fell
+    # through to the generic header. The invariant test derives the emitted
+    # set from `_compute_next_action`'s own AST.
+    "transition_to_temper": _Imperative(
+        (
+            _Step("Foundry-Gate", "phase='temper'"),
+            _Step(
+                "Foundry-Phase", "phase='temper'",
+                note=(
+                    "that call enters F5, records TEMPER's own INSPECT at FULL "
+                    "width and sweeps the whole evidence corpus. Editing "
+                    "state.json by hand leaves the phase's first INSPECT with "
+                    "no recorded mode."
+                ),
+            ),
+        ),
+        _GATE_THEN_PHASE_NOTE.lstrip("\n"),
+    ),
+    # lead-stalls GI-008 / FR-007 (D-050) — THE LIST ENDS IN THE GATE OUT OF
+    # F5, BECAUSE THAT GATE'S RECORD IS HOW THE ROUTER KNOWS TEMPER RAN.
+    # This list was the Skill alone, and the exit sat in the CONTEXT as "When
+    # clean, call Foundry-Gate(phase='done'), update to F6." The Foundry-Next
+    # owed after the Skill re-served the Skill, so no sequence of served lists
+    # reached F6. The ledgers cannot answer "has TEMPER run" — a pass that
+    # filed nothing leaves them as ASSAY left them, and `temper` is not a
+    # stream wire id — so the list's last step is the crossing gate, whose
+    # `.gate-passed` record only the server's own evaluation in F5 can write
+    # (every transition unlinks it). `{gate}` comes on `details["crossing"]`.
+    # Foundry-Report comes before it because the DONE gate refuses without one.
+    "run_temper": _Imperative(
+        (
+            _Step(
+                "Skill", "skill='foundry:temper'",
+                note=(
+                    "it spawns the TEMPER micro-domain agents, which zoom into "
+                    "individual functions, single pages and specific flows and "
+                    "ask whether they actually work."
+                ),
+            ),
+            _Step(
+                "Foundry-Report",
+                note=(
+                    "generated from the ledgers TEMPER has just written, and "
+                    "the DONE gate refuses without it."
+                ),
+            ),
+            _Step(
+                "Foundry-Gate", "phase='{gate}'",
+                note=(
+                    "the gate out of F5. Its record is what the next "
+                    "Foundry-Next reads to serve the crossing; a blocking "
+                    "defect TEMPER filed is served the GRIND crossing instead."
+                ),
+            ),
+        ),
+        "TEMPER's roster is the open TEMPER_CANDIDATE observations plus its "
+        "own micro-domains. Each agent records its OWN run with Foundry-Stream "
+        "and files what it finds; a probe driven and found clean is a result, "
+        "not a blank.",
+    ),
+    "transition_to_nyquist": _Imperative(
+        (
+            _Step("Foundry-Gate", "phase='nyquist'"),
+            _Step(
+                "Foundry-Phase", "phase='nyquist'",
+                note=(
+                    "that call enters F5.5 and sweeps the whole evidence "
+                    "corpus first. It is refused unless this run was started "
+                    "with --nyquist and every requirement is VERIFIED."
+                ),
+            ),
+        ),
+        _GATE_THEN_PHASE_NOTE.lstrip("\n"),
+    ),
+    # lead-stalls GI-008 / FR-007 (D-050) — the `run_temper` shape, for the
+    # same reason: nothing an auditor writes is a server record, so the list
+    # ends in the gate out of F5.5 and the router reads that. `done` is
+    # accepted from F5.5 on a --nyquist run, so the crossing it leads to is
+    # `transition_to_done` itself. The auditors are one call per batch the
+    # router cut from verdicts.json (D-079, `_EACH_NYQUIST_BATCH`).
     #
-    # `_compute_next_action` emitted these and `_ACTION_IMPERATIVES` had no
-    # entry for any of them, so each fell through to the generic header —
-    # "Execute the first tool call mentioned. Do not deliberate." — over an
-    # instructions body that, for several of them, mentions no tool call at all.
-    # An imperative table with holes is worse than none: the holes are invisible
-    # and they are exactly where the lead improvises. The invariant test derives
-    # the emitted set from this function's own AST, so the tenth is caught the
-    # day it is written.
-    "transition_to_temper": (
-        "YOUR NEXT CALLS (in order):\n"
-        "  (1) Foundry-Gate(phase='temper')\n"
-        "  (2) Foundry-Phase(phase='temper') — that call enters F5, records "
-        "TEMPER's own INSPECT at FULL width and sweeps the whole evidence "
-        "corpus. Editing state.json by hand leaves the phase's first INSPECT "
-        "with no recorded mode." + _GATE_THEN_PHASE_NOTE
+    # lead-stalls GI-008 / FR-007 (D-081) — the note and the trailer said an
+    # ESCALATE_IMPL_BUG "starts a new GRIND cycle" over a list that filed
+    # nothing, and nothing but the lead could: the auditor reaches no door.
+    # They now say where the escalation goes and what serves its filing.
+    "run_nyquist": _Imperative(
+        (
+            _Step(_EACH_NYQUIST_BATCH),
+            _Step(
+                "Foundry-Report",
+                note="the DONE gate refuses without the generated report.",
+            ),
+            _Step(
+                "Foundry-Gate", "phase='done'",
+                note=(
+                    "the gate out of F5.5. Its record is what the next "
+                    "Foundry-Next reads to serve the crossing, and it reads "
+                    "the auditors' result files first: an ESCALATE_IMPL_BUG "
+                    "row no open blocking defect carries is served as the "
+                    "filing that opens the GRIND crossing instead."
+                ),
+            ),
+        ),
+        "Each classifies COVERED / UNTESTED / UNDERTESTED, generates minimal "
+        "behavioural tests, runs them, commits the passing ones and writes "
+        "its JSON summary to the result file its prompt names. That file is "
+        "the only place an auditor's escalation reaches this server: the "
+        "auditor has no door to file through, so the list the next "
+        "Foundry-Next serves carries the filing, and you file nothing from "
+        "an auditor's reply. An untested requirement is never marked as "
+        "passing.",
     ),
-    "run_temper": (
-        "YOUR NEXT CALL: spawn the TEMPER micro-domain agents. TEMPER zooms into "
-        "individual functions, single pages and specific flows and asks whether "
-        "they actually work — its roster is the open TEMPER_CANDIDATE "
-        "observations plus its own micro-domains. Each agent records its OWN "
-        "run with Foundry-Stream and files what it finds; a probe driven and "
-        "found clean is a result, not a blank."
+    # lead-stalls GI-008 / FR-007 (D-053) — the filing ASSAY's verdicts may
+    # still owe is the list's first step, so the list succeeds on the state it
+    # is served on (see `_EACH_UNFILED_VERDICT`).
+    "assay_failed_loop_back": _Imperative(
+        (
+            _Step(_EACH_UNFILED_VERDICT),
+            _Step("Foundry-Tasks"),
+            _Step("Foundry-Gate", "phase='grind'"),
+            _Step(
+                "Foundry-Phase", "phase='assay_fail'",
+                note=(
+                    "the ASSAY-rejection door into F3. It is the same "
+                    "transition `grind_start` is, through the other door, and "
+                    "it is bounded by the same --max-cycles cap."
+                ),
+            ),
+        ),
+        _GATE_THEN_PHASE_NOTE.lstrip("\n"),
     ),
-    "transition_to_nyquist": (
-        "YOUR NEXT CALLS (in order):\n"
-        "  (1) Foundry-Gate(phase='nyquist')\n"
-        "  (2) Foundry-Phase(phase='nyquist') — that call enters F5.5 and sweeps "
-        "the whole evidence corpus first. It is refused unless this run was "
-        "started with --nyquist and every requirement is VERIFIED."
-        + _GATE_THEN_PHASE_NOTE
+    "widen_inspect": _Imperative(
+        (
+            _Step("Foundry-Gate", "phase='inspect_start'"),
+            _Step(
+                "Foundry-Phase", "phase='inspect_start'",
+                # lead-stalls D-057 — width-neutral, because this list is now
+                # served for two clean F2 states: a DELTA cycle, and a FULL one
+                # a still-ESCALATED class holds DONE shut over. "The DELTA cycle
+                # came back clean" was false for the second, in the one line
+                # the lead acts on.
+                #
+                # lead-stalls GI-008 / FR-007 (D-088) — AND IT STATES WHAT THE
+                # CROSSING RECORDS; IT ORDERS NOTHING AFTER IT. This ended
+                # "Then run every stream it names": a move after the list's
+                # last step with no literal call, beside the rules' own "call
+                # Foundry-Next after that last step". Obeyed, the lead chose
+                # each stream's agent and wrote each prompt itself — D-040's
+                # judgment task, minus the snapshot pin and the ledger clause
+                # the served stream steps carry. That Foundry-Next serves
+                # those steps, so the note says so, in `transition_to_inspect`'s
+                # register.
+                note=(
+                    "AGAIN, from F2: the re-open this clean INSPECT owes before "
+                    "ASSAY, not the ASSAY gate. That crossing advances the "
+                    "cycle counter, sweeps the whole evidence corpus and "
+                    "RECORDS this INSPECT's width as FULL and the full roster "
+                    "every stream then runs. The Foundry-Next after this "
+                    "list's last step serves one call per stream that roster "
+                    "names."
+                ),
+            ),
+        ),
+        _GATE_THEN_PHASE_NOTE.lstrip("\n"),
     ),
-    "run_nyquist": (
-        "YOUR NEXT CALL: batch the VERIFIED requirements by 5 and spawn one "
-        "Agent(subagent_type='foundry:nyquist-auditor') per batch in a SINGLE "
-        "parallel message. Each classifies COVERED / UNTESTED / UNDERTESTED, "
-        "generates minimal behavioural tests, runs them and commits the passing "
-        "ones. Any ESCALATE_IMPL_BUG result starts a new GRIND cycle. Never mark "
-        "an untested requirement as passing."
+    "record_inspect_width": _Imperative(
+        (
+            _Step("Foundry-Gate", "phase='inspect_start'"),
+            _Step(
+                "Foundry-Phase", "phase='inspect_start'",
+                note=(
+                    "from F2. This INSPECT has no recorded width, so the "
+                    "roster, the rule and the evidence sweep it was opened "
+                    "with are all unknown, and every door that reads the width "
+                    "refuses. Do NOT edit state.json by hand — the transition "
+                    "is what records the decision."
+                ),
+            ),
+        ),
+        _GATE_THEN_PHASE_NOTE.lstrip("\n"),
     ),
-    "assay_failed_loop_back": (
-        "YOUR NEXT CALLS (in order):\n"
-        "  (1) Foundry-Tasks\n"
-        "  (2) Foundry-Gate(phase='grind')\n"
-        "  (3) Foundry-Phase(phase='assay_fail') — the ASSAY-rejection door into "
-        "F3. It is the same transition `grind_start` is, through the other door, "
-        "and it is bounded by the same --max-cycles cap." + _GATE_THEN_PHASE_NOTE
-    ),
-    "widen_inspect": (
-        "YOUR NEXT CALLS (in order):\n"
-        "  (1) Foundry-Gate(phase='inspect_start')\n"
-        "  (2) Foundry-Phase(phase='inspect_start') AGAIN, from F2. "
-        "The DELTA cycle came back clean, which earns the widening re-open "
-        "rather than the ASSAY gate: that crossing advances the cycle counter, "
-        "sweeps the whole evidence corpus, records FULL and requires the full "
-        "roster. Then run every stream it names — a spot check is not a FULL "
-        "INSPECT."
-        + _GATE_THEN_PHASE_NOTE
-    ),
-    "record_inspect_width": (
-        "YOUR NEXT CALLS (in order):\n"
-        "  (1) Foundry-Gate(phase='inspect_start')\n"
-        "  (2) Foundry-Phase(phase='inspect_start') from F2. This "
-        "INSPECT has no recorded width, so the roster, the rule and the evidence "
-        "sweep it was opened with are all unknown, and every door that reads the "
-        "width refuses. Do NOT edit state.json by hand — the transition is what "
-        "records the decision."
-        + _GATE_THEN_PHASE_NOTE
-    ),
-    "done": (
-        "YOUR NEXT CALL: NONE. This run is DONE. Read REPORT.md and tell the "
-        "user what shipped. Do NOT dispatch a wave, do NOT call Foundry-Phase, "
-        "do NOT call Foundry-Next in a loop. Start a NEW run with Foundry-Init "
-        "if there is more work."
-    ),
-    "unknown": (
-        "YOUR NEXT CALL: Foundry-Context. The guidance engine does not recognise "
-        "this run's phase, which means `state.json` carries a value no "
-        "transition writes. Read the run's state, then Foundry-Next again. Do "
-        "NOT guess a transition token — an unrecognised phase is a state to "
-        "diagnose, not one to advance out of."
+    # lead-stalls GI-008 / FR-007 (D-055) — THE RUN STATE NO ACCEPTED
+    # TRANSITION LEAVES, ANSWERED AS ONE.
+    #
+    # A class still ESCALATED holds DONE shut until ST-001's clean arm or
+    # ST-002's budget arm clears it, and the clean arm moves only at an
+    # `inspect_start` crossing that advances the cycle counter. With no defect
+    # open, from a FULL F2 or from anywhere past ASSAY, the server accepted no
+    # such crossing at 6c350c0: `grind_start` / `assay_fail` refuse "No open
+    # defects to grind", `inspect_start` from a FULL F2 refused "nothing to
+    # widen" and is not accepted from F4 on. Driven, the lists served there instead —
+    # `transition_to_assay`, then `transition_to_done` or `run_temper` —
+    # each ended in a refused gate and came back identical, forever, and the
+    # CONTEXT named `grind_start` then `inspect_start` from F2, both refused.
+    #
+    # Any list served here would be refused, so this answers NONE and says why,
+    # in the register of `done` and `halted`. The operator's escalation
+    # override is the one way out, and it is the operator's, never a step of
+    # the lead's list — the CONTEXT names its text the way `_escalation_notice`
+    # does.
+    #
+    # lead-stalls D-057 — AND IT IS NOW SERVED ONLY PAST ASSAY. The graph
+    # change C-008 named landed: `inspect_start` from a clean FULL F2 is
+    # accepted while a class is held, and the F2 arm serves it as
+    # `widen_inspect`. From F4, F5 and F5.5 with nothing open no transition
+    # reaches INSPECT, so this stays as the answer for a run standing there.
+    "escalation_held": _Imperative((), (
+        "A defect class is still ESCALATED, DONE is refused until it is "
+        "CLEARED, and past ASSAY with no defect open no transition the server "
+        "accepts can clear it — the CONTEXT below names the class, the refusals and "
+        "the operator's override. That is a gap in the server's transition "
+        "graph, the error ending the rules above name, and not a step left to "
+        "you: do NOT file a defect to reopen a GRIND, do NOT call "
+        "Foundry-Phase, do NOT call Foundry-Next in a loop. Tell the user the "
+        "run is held on that escalation, and end your turn: nothing but the "
+        "user moves this run from here."
+    )),
+    # lead-stalls GI-008 / OT-013 (D-087) — the trailer used to end "Start a
+    # NEW run with Foundry-Init if there is more work.": a second move behind a
+    # condition, beside an empty step list, under standing rules that say
+    # never ask. A lead reading REPORT.md's open backlog as "more work"
+    # settled the condition itself and started a run nobody asked for. Whether
+    # there is more work is the user's call, so the trailer says so and names
+    # no call for the lead.
+    "done": _Imperative((), (
+        "This run is DONE. Read REPORT.md and tell the user what shipped. Do "
+        "NOT dispatch a wave, do NOT call Foundry-Phase, do NOT call "
+        "Foundry-Next in a loop, and do NOT start another run: further work "
+        "is a new run the USER starts."
+    )),
+    "unknown": _Imperative(
+        (
+            _Step(
+                "Foundry-Context",
+                note=(
+                    "the guidance engine does not recognise this run's phase, "
+                    "which means `state.json` carries a value no transition "
+                    "writes."
+                ),
+            ),
+            _Step("Foundry-Next"),
+        ),
+        "Do NOT guess a transition token — an unrecognised phase is a state to "
+        "diagnose, not one to advance out of.",
     ),
 }
 
 
+def _template_steps(steps: tuple[_Step, ...]) -> tuple[_Step, ...]:
+    """``steps`` with every slot step expanded to all it can name."""
+    return tuple(
+        expanded for step in steps for expanded in _expanded_steps(step, None)
+    )
+
+
+def _template(imperative: _Imperative) -> str:
+    return _render_imperative(
+        imperative._replace(steps=_template_steps(imperative.steps))
+    )
+
+
+#: The lead-facing TEMPLATE table, rendered from `_IMPERATIVES`: a branched
+#: entry holds every branch between `_BRANCH_OPEN` / `_BRANCH_CLOSE` markers,
+#: so the prose sweeps keep seeing all of it (see the section note above).
+_ACTION_IMPERATIVES: dict[str, str] = {
+    action: (
+        "".join(
+            _BRANCH_OPEN + name + _BRANCH_CLOSE + _template(branch)
+            for name, branch in entry.items()
+        )
+        if isinstance(entry, dict) else _template(entry)
+    )
+    for action, entry in _IMPERATIVES.items()
+}
+
+
+def _chosen_imperative(action: str, liveness: object) -> _Imperative | None:
+    """The one `_Imperative` the lead receives for ``action``, before slots."""
+    entry = _IMPERATIVES.get(action)
+    if isinstance(entry, dict):
+        return entry[_branch_name(entry, _branch_states(liveness))]
+    return entry
+
+
+def _emitted_imperative(
+    action: str,
+    details: dict,
+    run_name: str = "",
+    phase: str = "",
+    liveness: object = None,
+    cycle: object = None,
+) -> tuple[tuple[_Step, ...] | None, str]:
+    """``(steps, header)`` for the lead: the chosen branch, expanded and
+    substituted, and its rendering. ``(None, generic header)`` for an action
+    with no entry or an unresolved crossing.
+
+    Substitutes `{run}` with the active run slug so team names
+    (cast-{run}-wave-{wave}, grind-{run}-cycle-{cycle}) are distinguishable
+    across concurrent runs, and `active` when no run is active.
+
+    fallout D-058 — ``{gate}`` / ``{token}`` ARE SUBSTITUTED FROM THE CROSSING
+    THE EMITTING PHASE NAMES, from one `_ACTION_CROSSINGS` row, and a
+    placeholder that does not resolve takes the generic fallback: printing a
+    literal `{gate}` would hand the lead a call it would try to make.
+
+    lead-stalls FR-015 / GI-008 / CT-008 — ``liveness`` CHOOSES THE BRANCH,
+    before and outside that fallback. It is the `_waiting_on_agents` result the
+    caller already measured, passed rather than recomputed so the payload the
+    lead sees and the imperative it is given are one reading. `_branch_name` is
+    total, like `_halt_cause`, so no reading sends a branched entry to the
+    generic "Execute the first tool call mentioned. Do not deliberate."
+
+    lead-stalls D-009 / D-012 / D-020 — ``{wave}``, ``{built_wave}`` and
+    ``{casting}`` come off that same reading, and ``{cycle}`` is the run-level
+    counter the caller read once; all four helpers are total, so no reading
+    leaves one literal. `{wave}` is replaced before `{built_wave}` and cannot
+    chew on it — the character before `wave}` there is an underscore.
+
+    lead-stalls D-040 — the stream placeholder expands from
+    ``details["missing_streams"]``, the roster the `run_streams` arm published
+    beside this header.
+    """
+    imperative = _chosen_imperative(action, liveness)
+    if imperative is None:
+        return None, _generic_header(action)
+    return _resolved_imperative(
+        imperative, action, details, run_name, phase, liveness, cycle,
+    )
+
+
+def _generic_header(action: str) -> str:
+    return (
+        f"YOUR NEXT CALL: follow the CONTEXT below (action='{action}'). "
+        "Execute the first tool call mentioned. Do not deliberate."
+    )
+
+
+def _resolved_imperative(
+    imperative: _Imperative,
+    action: str,
+    details: dict,
+    run_name: str,
+    phase: str,
+    liveness: object,
+    cycle: object,
+) -> tuple[tuple[_Step, ...] | None, str]:
+    """`_emitted_imperative`'s second half, for one given `_Imperative`: its
+    steps expanded and substituted, and its rendering. Split out so the audit
+    can render every declared branch through the one resolver the lead's
+    header takes, and name which branch arrived by equality.
+
+    lead-stalls GI-008 / FR-007 (D-050) — a crossing that turns on the run's
+    FLAGS rather than on the emitting phase comes on ``details["crossing"]``,
+    the same `{"gate", "token"}` row shape: `run_temper` ends in the gate out
+    of F5, which is `nyquist` on a --nyquist run and `done` otherwise, and F5
+    is the only phase it is emitted from. A row that is absent still takes the
+    generic fallback below, as an unresolved phase-keyed row does."""
+    crossing = (
+        _ACTION_CROSSINGS.get(action, {}).get(phase)
+        or (details or {}).get("crossing")
+        or {}
+    )
+    halt_cause = _halt_cause((details or {}).get("halted_reason_member"))
+
+    def resolve(text: str) -> str:
+        text = (
+            text
+            .replace("{wave}", _cast_wave(liveness))
+            .replace("{built_wave}", _built_cast_wave(liveness))
+            .replace("{cycle}", _grind_cycle(cycle))
+            .replace("{casting}", _casting_slot(liveness))
+            .replace("{halt_cause}", halt_cause)
+        )
+        if crossing:
+            text = (
+                text
+                .replace("{gate}", crossing["gate"])
+                .replace("{token}", crossing["token"])
+            )
+        return text.replace("{run}", run_name or "active")
+
+    steps = [
+        expanded for step in imperative.steps
+        for expanded in _expanded_steps(step, details or {})
+    ]
+    resolved = tuple(
+        step._replace(
+            args=None if step.args is None else resolve(step.args),
+            each=resolve(step.each),
+            note=resolve(step.note),
+        )
+        for step in steps
+    )
+    header = _render_imperative(
+        _Imperative(resolved, resolve(imperative.trailer))
+    )
+    if "{gate}" in header or "{token}" in header:
+        return None, _generic_header(action)
+    return resolved, header
 
 
 def _format_imperative_header(
@@ -1499,57 +4044,16 @@ def _format_imperative_header(
     details: dict,
     run_name: str = "",
     phase: str = "",
+    liveness: object = None,
+    cycle: object = None,
 ) -> str:
-    """Produce the one-line 'YOUR NEXT CALL' header for the given action.
-    Falls back to a generic header if the action is unmapped.
-
-    Substitutes `{run}` in the imperative with the active run slug so team
-    names (cast-{run}-wave-N, grind-{run}-cycle-N) are distinguishable across
-    concurrent runs. DECOMPOSE no longer uses a team — it spawns background
-    Agents (per commands/start.md \u00a7F0.5).
-    If no run is active, `{run}` is replaced with `active` as a safe default.
-
-    fallout D-058 — AND ``{gate}`` / ``{token}`` ARE SUBSTITUTED FROM THE
-    CROSSING THE EMITTING PHASE NAMES.
-
-    `transition_to_inspect` is emitted from F1 and from F3, and the two are
-    different crossings: F1 gates `inspect` and calls `Foundry-Phase('cast')`,
-    F3 gates `inspect_start` and calls `Foundry-Phase('inspect_start')`. One
-    frozen pair of literals is refused at BOTH sites, so the pair is taken from
-    one `_ACTION_CROSSINGS` row at emission time. Step (1) and step (2) are two
-    fields of that row, which is what makes them agree by construction rather
-    than by anyone remembering to change both.
-
-    A PLACEHOLDER THAT DOES NOT RESOLVE TAKES THE GENERIC FALLBACK. Printing a
-    literal `{gate}` would be worse than saying nothing — the lead is instructed
-    to "execute the first tool call mentioned", and `Foundry-Gate(phase=
-    '{gate}')` is a call it would try to make. The fallback sends it to the
-    CONTEXT below, which the branch already wrote for this phase.
-    """
-    imperative = _ACTION_IMPERATIVES.get(action)
-    if imperative and "{halt_cause}" in imperative:
-        # fallout US-006 / FR-019 (D-147) — substituted from the RECORDED
-        # member, which the halted branch publishes in `details` beside the
-        # sentence. Resolved BEFORE the crossing substitution and outside the
-        # unresolved-placeholder fallback below, because `_halt_cause` is total:
-        # there is no input for which this leaves a literal `{halt_cause}` in
-        # the header, and a halted run must never take the generic fallback.
-        imperative = imperative.replace(
-            "{halt_cause}", _halt_cause(details.get("halted_reason_member"))
-        )
-    if imperative:
-        crossing = _ACTION_CROSSINGS.get(action, {}).get(phase)
-        if crossing:
-            imperative = (
-                imperative
-                .replace("{gate}", crossing["gate"])
-                .replace("{token}", crossing["token"])
-            )
-        if "{gate}" in imperative or "{token}" in imperative:
-            imperative = None
-    if imperative:
-        return imperative.replace("{run}", run_name or "active")
-    return f"YOUR NEXT CALL: follow the CONTEXT below (action='{action}'). Execute the first tool call mentioned. Do not deliberate."
+    """The 'YOUR NEXT CALL(S)' header for ``action`` — `_emitted_imperative`'s
+    rendering. ``instructions`` is unused and kept for the callers that pass
+    the CONTEXT beside it."""
+    return _emitted_imperative(
+        action, details, run_name=run_name, phase=phase, liveness=liveness,
+        cycle=cycle,
+    )[1]
 
 
 
@@ -1739,17 +4243,24 @@ def _escalation_notice(fdir: Path, project_root: str) -> str:
     # Each restore instruction is rendered per class and verified to round-trip
     # (D-133), rather than offering a "<class>" placeholder the operator has to
     # fill in with a key the grammar may not read back.
+    #
+    # lead-stalls GI-008 / FR-007 — this notice rides in the
+    # `transition_to_grind` CONTEXT, which names no call
+    # (`_BRANCHED_ACTION_CONTEXT`), so the restore is named as the directive's
+    # TEXT rather than as a Foundry-Directive call: it is the operator's
+    # override, never a step of the lead's list.
     restores = "; ".join(
-        _override_offer(key)
+        f"`{text}`" if (text := _override_instruction(key)) is not None
+        else _override_offer(key)
         for key in sorted(escalated)
     )
     return (
         f" ESCALATED: {len(escalated)} defect class(es) have recurred for "
-        f"{ESCALATION_CYCLES}+ consecutive cycles ({names}). Foundry-Tasks will "
-        "emit ONE structural-fix packet per escalated class instead of "
-        "per-instance packets — dispatch that packet as a single task and do not "
-        "split it back apart. Every listed defect must still close. To restore "
-        f"per-instance packets: {restores}."
+        f"{ESCALATION_CYCLES}+ consecutive cycles ({names}). The Foundry-Tasks "
+        "door emits ONE structural-fix packet per escalated class instead of "
+        "per-instance packets, and that packet is ONE task, never split back "
+        "apart. Every listed defect must still close. The Foundry-Directive "
+        f"text that restores per-instance packets: {restores}."
     )
 
 
@@ -1859,6 +4370,9 @@ def _open_by_blocking_tier(fdir: Path) -> dict:
     blocking = sum(len(buckets[tier]) for tier in BLOCKING_TIERS)
     return {
         "blocking": blocking,
+        # Every open record, whatever its tier: the count
+        # `Foundry-Gate(phase='grind')` refuses on when it is zero (D-053).
+        "open": sum(len(ids) for ids in buckets.values()),
         "live": buckets["LIVE"],
         "unknown": buckets[TIER_UNKNOWN],
         "latent": buckets["LATENT"],
@@ -1890,115 +4404,228 @@ def _recorded_inspect_mode(fdir: Path) -> dict | None:
 
 
 
-def _still_escalated_classes(fdir: Path, project_root: str) -> list[str]:
-    """The class keys ST-010 still holds DONE open for (D-129).
-
-    The SAME union `_done_preconditions` refuses on — ledger recurrence
-    (`_escalated_classes`) plus the persisted status (`_persisted_escalations`)
-    — read through one function so the guidance engine and the gate can never
-    name different sets. Overrides are honoured by both halves.
-    """
-    escalated_open = _escalated_classes(fdir, project_root)
-    persisted = _load_json(fdir / ESCALATION_FILENAME).get("classes", {})
-    if not isinstance(persisted, dict):
-        persisted = {}
-    return sorted(
-        set(escalated_open) | set(_persisted_escalations(fdir, project_root, persisted))
-    )
-
-
-
-
 def _still_escalated_notice(
-    fdir: Path, project_root: str, *, inspect_mode: str = ""
+    fdir: Path, project_root: str, still: list[str], *, served: str
 ) -> str:
-    """One sentence naming any class ST-010 will still hold DONE open for.
+    """The facts about the classes ST-010 still holds DONE open for (D-129).
 
-    Empty string when nothing is escalated, so a clean cycle reads identically.
+    D-129 put this sentence on the clean path: a class the server has
+    PERSISTED as ESCALATED with every instance closed was named nowhere before
+    the F6 door, and `_escalation_notice` (the sentence above) is blind to it
+    twice over. It reads the same union `_done_preconditions` refuses on
+    (``still``, from `_still_escalated_classes`), and carries
+    `_escalation_exit_distances` so the reader sees how far each arm is.
 
-    D-129 — THE CLEAN PATH LEARNED OF THE ST-010 BLOCK AT THE F6 DOOR.
-    -----------------------------------------------------------------
-    `_escalation_notice` (the sentence above) is wired into ONE arm: the
-    `transition_to_grind` branch, which is reached only when
-    `open_count > 0`. It also reads `_escalated_classes`, which opens with
-    `if not bucket["open"]: continue` — so a class the server has PERSISTED as
-    ESCALATED with every instance closed is invisible to it twice over.
-
-    Driven: three LATENT filings of class FDC at cycles 1-3; the boundary
-    closing cycle 3 wrote escalation.json status ESCALATED, escalated_at 3,
-    packets 0; all five required streams marked, blocking 0.
-    `foundry_next_action` returned action transition_to_assay with "INSPECT
-    clean: zero blocking defects, at FULL width ... 3 LATENT defect(s) stay
-    open ... they block nothing" and named neither FDC, nor ESCALATED, nor
-    ST-010. Following it: inspect_clean ok, Gate assay passed, Gate temper
-    passed, Phase temper ok, Gate nyquist passed, Phase nyquist ok — and then
-    `Foundry-Gate('done')` refused "1 defect class(es) are still ESCALATED:
-    FDC". Each boundary the class still needs is then reached from a
-    post-verification phase and re-enters through final_gate FULL, ASSAY,
-    TEMPER and NYQUIST again: two extra post-verification loops for a class
-    that could have cleared in two INSPECT cycles from F2. NFR-001 targets
-    exactly that axis, and US-001's premise is that the exit is MECHANICAL —
-    which it is, and the lead could not see the meter running.
-
-    READS THE SAME UNION `_done_preconditions` REFUSES ON — `_escalated_classes`
-    (ledger recurrence) ∪ `_persisted_escalations` (the recorded status) — so
-    the notice and the refusal cannot name different sets. Overrides are
-    honoured by both halves, so a class the operator de-escalated is silent
-    here exactly as it is at the gate.
-
-    Carries `_escalation_exit_distances`, so the sentence states not just THAT
-    a class blocks but how far each arm is: a lead reading "1 more clean cycle"
-    at F2 crosses one boundary, where the same lead reading it at F5.5 pays a
-    full post-verification loop for the same crossing.
-
-    D-153 — AND IT NAMES THE CALL THE SERVER ACTUALLY ACCEPTS FROM HERE.
+    lead-stalls GI-008 / FR-007 (D-055) — IT STATES THE RUN STATE AND NAMES
+    NO CROSSING OF ITS OWN.
     -------------------------------------------------------------------
-    "The cheapest place to make those crossings is HERE, from F2" was true and
-    unactionable: the only crossing the sentence named was
-    "Foundry-Phase(phase='inspect_start') from F3", which is where the crossing
-    lands but not a call this arm's reader can make. Driven at cycle 8 on a run
-    at F2 whose recorded width was FULL / final_gate: `inspect_start` is
-    REFUSED — "this cycle's recorded width is FULL (rule final_gate), so there
-    is nothing to widen" — and `live_clean_cycles` stayed 0. The crossing that
-    works from a FULL F2 is `grind_start` and then `inspect_start`: a GRIND
-    opened with nothing to fix, which no arm named and which reads as a mistake
-    unless the prose says it is the crossing. The sibling `widen_inspect` arm
-    names ITS re-open; this one named none.
+    This rode in the CONTEXT of `transition_to_assay` saying "the cheapest
+    place to make those crossings is HERE, from F2" and naming `grind_start`
+    then `inspect_start` — a second sequence beside a header that served
+    ASSAY, which the lead had to weigh against it. D-153 had chosen that
+    spelling from the recorded width, and it was right only while some record
+    was open: driven on a FULL F2 with the class's instances all fixed, both
+    calls it named were refused, while the header's ASSAY list led on to a
+    DONE gate that refused the same class forever.
 
-    So ``inspect_mode`` — the width the transition RECORDED, which this arm's
-    caller has already read — selects the spelling, and the two spellings are
-    exactly the two the `inspect_start` refusal's own hint offers from F2.
-    Reported, never decided (GI-008): the width is read back, not computed.
+    The router now serves the crossing itself (`_escalation_hold`,
+    `widen_inspect`), so this says which list that is — ``served`` is
+    ``"widen"``, ``"grind"`` or ``"held"``, chosen by the caller that chose the
+    action — and the distances name the crossing by what it does, never as a
+    call: a counter-advancing INSPECT crossing is the only event the clean arm
+    counts, whichever door reaches it.
+
+    lead-stalls D-057: ``"widen"`` is every held class at F2 now, DELTA or a
+    clean FULL cycle, and ``"held"`` is served only past ASSAY, so its sentence
+    no longer says a FULL INSPECT has nothing to widen — the re-open is
+    accepted there, which is why F2 never answers ``"held"``.
     """
-    still = _still_escalated_classes(fdir, project_root)
     if not still:
         return ""
-    if (inspect_mode or "").upper() == "DELTA":
-        crossing = (
-            "from F2 at DELTA width that is the widening re-open, "
-            "Foundry-Phase(phase='inspect_start'), which advances the counter "
-            "and closes one"
-        )
-    else:
-        crossing = (
-            "from F2 at FULL width Foundry-Phase(phase='inspect_start') is "
-            "REFUSED (there is nothing to widen), so the crossing is "
-            "Foundry-Phase(phase='grind_start') — a GRIND with nothing to fix "
-            "is what a clean cycle IS — and then "
-            "Foundry-Phase(phase='inspect_start'), which advances the counter "
-            "and closes one"
-        )
+    names = ", ".join(still)
+    closing = {
+        "widen": (
+            " The widening re-open the list above makes is one of those "
+            "crossings."
+        ),
+        "grind": (
+            " No blocking defect is open, so the list above opens a GRIND that "
+            "dispatches nobody — the GRIND gate counts every open record, "
+            "whatever its tier — and the INSPECT crossing that closes it is "
+            "one of those crossings."
+        ),
+        "held": (
+            " No defect is open for a GRIND to open on, and past ASSAY every "
+            "transition the server accepts back toward INSPECT runs through a "
+            "GRIND. The re-open that clears a held class with nothing open is "
+            "accepted from a clean FULL F2 and not from past ASSAY. The "
+            "operator's override that de-escalates a class, which the DONE guard "
+            "honours, is the Foundry-Directive text "
+            + "; ".join(
+                f"`{text}`" if (text := _override_instruction(key)) is not None
+                else _override_offer(key)
+                for key in still
+            )
+            + "."
+        ),
+    }[served]
     return (
         f" ST-010: {len(still)} defect class(es) are still ESCALATED "
-        f"({', '.join(still)}) and DONE is refused until every one of them is "
-        "CLEARED — a LATENT-only backlog does not by itself clear a class. "
-        "Clearing it is a boundary crossing, and the cheapest place to make "
-        "those crossings is HERE, from F2: reaching ASSAY, TEMPER and NYQUIST "
-        "first means every remaining crossing is paid for twice."
-        + _escalation_exit_distances(fdir, project_root, still, crossing=crossing)
+        f"({names}) and DONE is refused until every one of them is "
+        "CLEARED — a LATENT-only backlog does not by itself clear a class."
+        + _escalation_exit_distances(
+            fdir, project_root, still, crossing=_CLEAN_CROSSING_PHRASE,
+        )
+        + closing
     )
 
 
+#: How the distances name ST-001's crossing from a guidance surface: by what
+#: it does, since which door reaches it depends on where the run stands and
+#: the list above the CONTEXT already names that door (D-055).
+_CLEAN_CROSSING_PHRASE = "each one an INSPECT crossing that advances the cycle counter"
+
+#: lead-stalls GI-008 / FR-007 (D-057) — why a clean FULL F2 with a class held
+#: is served `widen_inspect` rather than ASSAY, as the F2 arm states it beside
+#: the DELTA arm's sentence. Facts about the doors, and no call of its own:
+#: the header's list is the move.
+_HELD_CLASS_REOPEN = (
+    " The DONE gate refuses every class still ESCALATED, so this clean "
+    "INSPECT does not open ASSAY. `inspect_start` from a clean FULL F2 with a "
+    "class held is the re-open that closes this cycle: it advances the cycle "
+    "counter, sweeps the WHOLE evidence corpus, records FULL and names the "
+    "full roster, and ST-001's clean arm counts the cycle it closes."
+)
+
+
+
+
+def _escalation_hold(
+    fdir: Path,
+    project_root: str,
+    phase: str,
+    blocking: dict,
+    opening: str,
+    grind_config: dict,
+) -> dict | None:
+    """The answer for a clean run state a still-ESCALATED class holds DONE
+    shut over, or ``None`` when no class is held or a blocking defect is open.
+
+    lead-stalls GI-008 / FR-007 (D-055). A held class clears only at an
+    `inspect_start` crossing that advances the cycle counter, so every list
+    that walks on toward DONE — from F4, F5 and F5.5 the TEMPER, NYQUIST and
+    DONE crossings — ends at a DONE gate that refuses the class, and the next
+    Foundry-Next served it again. Driven, `run_temper` re-ran TEMPER every lap
+    and `transition_to_done` ran its strip and commit after the gate refused.
+
+    So wherever the run stands clean past ASSAY with a class held, this
+    answers first, with the one crossing the server accepts from there:
+
+      * some record is open (any tier; the GRIND gate counts them all)
+                         -> `transition_to_grind` with its dispatch slot at
+                            ``open_defects: 0``: Tasks, the GRIND gate and
+                            `grind_start`, and then the F3 arm's
+                            `transition_to_inspect` closes the cycle.
+      * nothing is open  -> `escalation_held`: no accepted transition advances
+                            the counter from here, and the header says so.
+
+    lead-stalls D-057 — F2 IS NOT ASKED. Every held class at F2 is served the
+    `widen_inspect` re-open by the F2 arm, DELTA or a clean FULL cycle, since
+    `transitions._inspect_start_preconditions` accepts the FULL one too. So
+    `escalation_held` is reached only past ASSAY with nothing open, which a
+    run the router walked through F2 does not reach holding a class: the arm
+    stays as the honest answer for a run that got there anyway. With a
+    blocking defect open the ordinary GRIND arms answer, and their crossing
+    counts too. ``opening`` is the caller's own first sentence about the phase
+    it measured; ``grind_config`` is the router's `GRIND_AGENT_CONFIG`.
+    """
+    if blocking["blocking"] > 0:
+        return None
+    still = _still_escalated_classes(fdir, project_root)
+    if not still:
+        return None
+    backlog = (
+        f" {len(blocking['latent'])} LATENT defect(s) stay open, tracked and "
+        "named in the F6 backlog; they block nothing."
+        if blocking["latent"] else ""
+    )
+    details = {
+        "open_defects": 0,
+        "live_defects": [],
+        "unknown_tier_defects": [],
+        "latent_backlog": blocking["latent"],
+        "still_escalated_classes": still,
+    }
+    if blocking["open"] > 0:
+        return {
+            "phase": phase,
+            "action": "transition_to_grind",
+            "instructions": (
+                opening + backlog
+                + _still_escalated_notice(fdir, project_root, still, served="grind")
+            ),
+            "details": {**details, "agent_config": grind_config},
+        }
+    return {
+        "phase": phase,
+        "action": "escalation_held",
+        "instructions": (
+            opening + backlog
+            + _still_escalated_notice(fdir, project_root, still, served="held")
+        ),
+        "details": details,
+    }
+
+
+
+
+def _team_work_in_flight(
+    reading: object, team_names: list, run_name: str, *, cast_open: bool
+) -> bool:
+    """Is a registered team still holding work, so `cleanup_teams` must wait?
+
+    lead-stalls FR-002 / ST-002 / ST-004 (D-015 / D-017 / D-020). Asked of the
+    SAME `_waiting_on_agents` reading the branched imperative is chosen from,
+    and only where that reading was taken — F1 before the crossing and F3. In
+    every other phase a registered team is stale by construction (the gates
+    into them refuse an active team), so the arm keeps firing there exactly as
+    it did.
+
+    THE ASYMMETRY DECIDES EVERY UNCERTAIN CASE (lead-stalls D-013): a team
+    left up one call too long costs a redundant call; a team torn down under
+    running or owed work loses that work.
+
+      * an agent is running                       -> in flight (both phases)
+      * F1, a casting refused or owed acceptance  -> in flight: its teammate
+        is the one who answers a refusal
+      * F1, the pending wave's own team           -> in flight: Team-Up made,
+        spawns not yet (`transition_to_cast` steps 4 to 6)
+      * F1, no wave position measured             -> in flight
+      * F1, a pending wave and an EARLIER wave's team -> finished: the next
+        wave's Team-Up refuses while it stands
+      * F1 every wave built, F3 nobody running    -> finished
+    """
+    if not isinstance(reading, dict):
+        return False
+    states = _branch_states(reading)
+    if states[0] == "live":
+        return True
+    if not cast_open:
+        return False
+    # `redispatch` too (lead-stalls D-022 / D-028): the refused casting's own
+    # team is not registered, but the arm fired on SOMETHING — another team, or
+    # a live pane the scan cannot attribute — and tearing that down is not the
+    # refusal's answer.
+    if states[0] in ("refused", "redispatch", "unaccepted"):
+        return True
+    if states[0] == "idle":
+        return False
+    pending = reading.get("cast_wave_pending")
+    if isinstance(pending, bool) or not isinstance(pending, int) or pending < 1:
+        return True
+    # The name the dispatch branch told the lead to create for this wave,
+    # spelled from the same `{run}` / `{wave}` values the header substitutes.
+    return f"cast-{run_name}-wave-{_cast_wave(reading)}" in team_names
 
 
 def _compute_next_action(project_root: str) -> dict:
@@ -2009,7 +4636,14 @@ def _compute_next_action(project_root: str) -> dict:
         return {
             "phase": "none",
             "action": "init",
-            "instructions": "No active foundry run. Call Foundry-Init to start a new run, or foundry_init(resume='run-name') to resume.",
+            # lead-stalls GI-008 / FR-007 — this CONTEXT, like every one
+            # below, states the run state and names no call: the numbered
+            # list above it is the move (see `_BRANCHED_ACTION_CONTEXT`).
+            "instructions": (
+                "No active foundry run: no run directory is active in this "
+                "project. The same door reopens an existing run with "
+                "resume='<run-name>'."
+            ),
             "details": {},
         }
 
@@ -2093,28 +4727,26 @@ def _compute_next_action(project_root: str) -> dict:
             "phase": RUN_PHASE_HALTED,
             "action": "halted",
             "instructions": (
-                f"Run HALTED at cycle {halted_cycle if halted_cycle is not None else '?'} — "
+                f"This run HALTED at cycle {halted_cycle if halted_cycle is not None else '?'} — "
                 f"{halted_sentence}. "
                 "HALTED is NOT DONE: this run stopped with open work. "
+                # lead-stalls GI-008 / FR-007 — facts only. The report this
+                # halt could not write is step (1) of the header above, served
+                # from `report_generated` below (`_UNWRITTEN_REPORT`); this
+                # block used to order that call itself, beneath a header that
+                # said NONE and "The report is generated."
                 + (
                     f"The report has been generated at {REPORT_MD_FILENAME} and "
-                    "names every open defect by tier. Do NOT dispatch another "
-                    "wave, do NOT call Foundry-Phase again — read the report "
-                    f"and {hand_off}."
+                    "names every open defect by tier."
                     if report_present
                     else (
                         f"The report was NOT generated — "
                         f"{report_error or 'it is not present at ' + str(report_path)}"
-                        ". Do NOT dispatch another wave and do NOT call "
-                        "Foundry-Phase again; neither is what is missing. "
-                        "Foundry-Report is not a phase transition and still "
-                        "runs on a halted run: repair what the error names, "
-                        f"call Foundry-Report to write {REPORT_MD_FILENAME}, "
-                        "then read it. Until it exists, read defects.json "
-                        "directly — the open work is recorded there whatever "
-                        f"the generator could not render — and {hand_off}."
+                        ". The open work is recorded in defects.json whatever "
+                        "the generator could not render."
                     )
                 )
+                + f" What remains is for the user: {hand_off}."
             ),
             "details": {
                 "halted_at_cycle": halted_cycle,
@@ -2142,20 +4774,60 @@ def _compute_next_action(project_root: str) -> dict:
             },
         }
 
-    teams = _check_active_teams(project_root)
-    if teams["active"]:
-        return {
+    # lead-stalls FR-002 / CT-003 / CT-006 / ST-002 / ST-004 (D-015..D-020) \u2014
+    # THE ROSTER IS READ BEFORE THE TEAM ARM, AND THE TEAM ARM ASKS IT.
+    #
+    # This arm returned `cleanup_teams` for ANY registered team, ahead of the
+    # F1 and F3 arms, and `transition_to_cast` / `transition_to_grind` order the
+    # lead to register one before it spawns a single teammate. So for the whole
+    # of a real wave the lead's `Foundry-Next` said "send shutdown to each
+    # teammate, TeamDelete, Foundry-Team-Down" over teammates that were still
+    # building; the branched `build_castings` / `fix_defects` answer, and the
+    # `agent_liveness` it carries, were reachable only with NO team registered,
+    # which is the one state the suite drove. `_WAITING_IS_NOT_STOPPING` then
+    # told a woken lead to call Foundry-Next, which walked it straight here.
+    #
+    # The reading is taken ONCE, here, for the two phases whose answer depends
+    # on it, published on the result and reused by `foundry_next_action`, so
+    # the arm chosen, the imperative printed and the `agent_liveness` beside
+    # them are one measurement of one roster.
+    cast_open = phase == "F1" and not (fdir / CAST_COMPLETE_MARKER).exists()
+    # lead-stalls D-028 — ONE team scan, read by the reading and by the arm.
+    # Two scans could disagree (the first failing and reading as "no team",
+    # or the registry changing between them), and the reading then chose
+    # `redispatch` while the arm saw the refused casting's team registered.
+    # A scan that cannot answer reads as "no team" for BOTH, on the D-013
+    # asymmetry: a team left up one call longer costs a redundant call, while
+    # an exception here would take Foundry-Next down with it.
+    try:
+        teams = _check_active_teams(project_root)
+    except Exception:  # noqa: BLE001 - the router never raises into the lead
+        teams = {"active": False, "teams": []}
+    # lead-stalls D-056 — and F0, whose decomposition writers are background
+    # agents the lead is woken by one at a time: the manifest cannot say
+    # whether the writer that has not written yet is still writing.
+    agent_liveness = (
+        _waiting_on_agents(project_root, teams=teams)
+        if cast_open or phase in ("F0", "F3") else None
+    )
+
+    if teams["active"] and not _team_work_in_flight(
+        agent_liveness, teams.get("teams") or [], fdir.name, cast_open=cast_open,
+    ):
+        cleanup = {
             "phase": phase,
             "action": "cleanup_teams",
             "instructions": (
-                f"Active teams detected: {', '.join(teams['teams'])}. "
-                "Send 'All work complete, stop working.' to each teammate in ONE parallel SendMessage batch, "
-                "then IMMEDIATELY call TeamDelete for each team \u2014 do NOT wait for shutdown_response, "
-                "shutdown_ack, idle confirmations, or any teammate reply. Idle / terminated panes ARE the "
-                "shutdown signal. TeamDelete cleans lingering tmux panes. Then Foundry-Team-Down for each team name."
+                f"Registered teams with no teammate of theirs running: "
+                f"{', '.join(teams['teams'])}. Every idle or terminated pane "
+                "IS the shutdown signal, and no shutdown_response, "
+                "shutdown_ack or teammate reply is coming."
             ),
             "details": {"active_teams": teams["teams"]},
         }
+        if agent_liveness is not None:
+            cleanup["agent_liveness"] = agent_liveness
+        return cleanup
 
     # FR-006 / AC-008 / D-055 — THE ROUTER IS TIER-AWARE, LIKE THE GATES.
     #
@@ -2221,48 +4893,68 @@ def _compute_next_action(project_root: str) -> dict:
     if phase == "F0":
         manifest = _load_json(fdir / "castings" / "manifest.json")
         casting_count = len(manifest.get("castings", []))
-        if casting_count == 0:
+        # lead-stalls GI-008 / FR-007 (D-056) — THE MANIFEST HOLDING A CASTING
+        # IS NOT THE DECOMPOSITION BEING FINISHED. Each writer adds its own
+        # entry when it is done, so the first writer to finish made this arm
+        # answer `transition_to_cast` while the others were still writing,
+        # and following it validated, entered F1 and dispatched wave 1 over a
+        # partial manifest. The writers' progress ledgers answer instead: any
+        # writer advancing is `add_castings`, whose `live` branch is END YOUR
+        # TURN, whatever the manifest already holds.
+        writing = bool((agent_liveness or {}).get("waiting"))
+        if casting_count == 0 or writing:
             return {
                 "phase": "F0",
                 "action": "add_castings",
                 "instructions": (
-                    f"DECOMPOSE: Spawn 1-5 BACKGROUND Agents to write casting files. No team needed.\n"
-                    f"1. Identify 2-5 domains from the spec.\n"
-                    f"2. Spawn one background Agent per domain in a SINGLE parallel message:\n"
-                    f"     model='opus', subagent_type='general-purpose', mode='bypassPermissions',\n"
-                    f"     run_in_background=true,\n"
-                    f"     prompt='<per commands/start.md \u00a7F0.5: write manifest.json entry +\n"
-                    f"              casting-<id>-prompt.md for your domain>'\n"
-                    f"3. All files go under {fdir}/castings/ \u2014 NOT castings/ at project root.\n"
-                    f"4. You'll be notified as each Agent completes; retrieve via TaskOutput(task_id).\n"
-                    f"   After all complete, call Foundry-Validate-Castings."
+                    f"DECOMPOSE (F0): the castings manifest lists "
+                    f"{casting_count} casting(s)"
+                    + (
+                        f", and {agent_liveness['count']} agent(s) are still "
+                        "writing — this server read their progress ledgers "
+                        "on this call."
+                        if writing else " and no agent is writing."
+                    )
+                    + f" Every casting file goes under {fdir}/castings/, "
+                    "never castings/ at the project root, and the "
+                    "agent_config below is ENFORCED for the decomposer."
+                    + _BRANCHED_ACTION_CONTEXT
                 ),
-                "details": {"foundry_dir": str(fdir), "agent_config": DECOMPOSE_AGENT_CONFIG},
+                # lead-stalls D-082 — the spec and the procedure the
+                # decomposer's literal prompt names (`_decomposer_steps`).
+                "details": {
+                    "foundry_dir": str(fdir),
+                    "casting_count": casting_count,
+                    "agent_config": DECOMPOSE_AGENT_CONFIG,
+                    **_decompose_dispatch(project_root, fdir, state),
+                },
+                "agent_liveness": agent_liveness,
             }
         return {
             "phase": "F0",
             "action": "transition_to_cast",
             "instructions": (
-                f"Decomposition complete ({casting_count} castings). "
-                "Call Foundry-Gate(phase='validate'), then Foundry-Phase(phase='start_cast'). "
-                "Create a CAST team (TeamCreate), register it (Foundry-Team-Up). "
-                "Spawn ONE teammate per casting (or per wave of independent castings). "
-                "Do NOT overload one teammate with many castings \u2014 distribute evenly."
+                f"DECOMPOSE complete: {casting_count} casting(s) in the "
+                "manifest, and no agent is writing — this server read the "
+                "progress ledgers on this call. One teammate builds one "
+                "casting, never many."
             ),
             "details": {"casting_count": casting_count, "agent_config": CAST_AGENT_CONFIG},
+            "agent_liveness": agent_liveness,
         }
 
     elif phase == "F1":
-        if not (fdir / CAST_COMPLETE_MARKER).exists():
+        if cast_open:
             return {
                 "phase": "F1",
                 "action": "build_castings",
                 "instructions": (
-                    "CAST phase: teammates are building. Wait for all tasks to complete. "
-                    "When done: shut down team, TeamDelete, Foundry-Team-Down, "
-                    "then Foundry-Phase(phase='cast')."
+                    "CAST phase (F1): this wave's castings are the work, and "
+                    "`.cast-complete` is not written yet."
+                    + _BRANCHED_ACTION_CONTEXT
                 ),
                 "details": {"agent_config": CAST_AGENT_CONFIG},
+                "agent_liveness": agent_liveness,
             }
         # D-072 / GI-009 — THE F2 ENTRY IS A TOOL CALL, AND THIS ARM NAMES IT.
         #
@@ -2278,14 +4970,13 @@ def _compute_next_action(project_root: str) -> dict:
             "phase": "F1",
             "action": "transition_to_inspect",
             "instructions": (
-                "CAST complete. Call Foundry-Gate(phase='inspect') to validate "
-                "preconditions, then Foundry-Phase(phase='cast') — that call is "
-                "what enters F2, sweeps the evidence corpus and RECORDS this "
-                "INSPECT's width (FULL, rule first_of_phase) and its roster. "
-                "Editing state.json to F2 by hand leaves the first INSPECT of "
-                "the phase with no recorded mode. Then spawn verification "
-                "agents for the roster it names: TRACE, PROVE. "
-                "SIGHT runs in MAIN THREAD. TEST/PROBE run as background agents."
+                "CAST complete: `.cast-complete` is written. The `cast` "
+                "transition is what enters F2, sweeps the evidence corpus and "
+                "RECORDS this INSPECT's width (FULL, rule first_of_phase) and "
+                "its roster; editing state.json to F2 by hand leaves the first "
+                "INSPECT of the phase with no recorded mode. SIGHT runs in the "
+                "MAIN THREAD, and the agent_configs below are the other "
+                "streams'."
             ),
             "details": {
                 "agent_configs": {
@@ -2308,47 +4999,76 @@ def _compute_next_action(project_root: str) -> dict:
         # agents for this roster" would be an instruction to run a roster
         # nothing recorded — this arm exists so the lead is never told to.
         if streams.get("unrecorded_width"):
-            return {
-                "phase": "F2",
-                "action": "record_inspect_width",
-                "instructions": (
-                    f"INSPECT phase: {streams['reason']}. {streams['hint']}"
-                ),
-                "details": {
-                    "unrecorded_width": True,
-                    "inspect_mode": "",
-                    "inspect_rule": "",
-                    "missing_streams": ["inspect_mode"],
-                },
-            }
-        if not streams["complete"]:
+            # lead-stalls GI-008 / FR-007 (D-063) — AND THE ONE READING WHERE
+            # THE RE-OPEN IS REFUSED IS SENT TO THE DOOR THAT ACCEPTS IT.
+            # ------------------------------------------------------------
+            # `record_inspect_width` serves `inspect_start`, and the widening
+            # crossing refuses while a blocking defect is open ("Widening an
+            # INSPECT over code the run is about to change re-verifies a tree
+            # that will not exist"). So on an unrecorded width WITH a defect
+            # filed, the list this arm served could not succeed either — the
+            # same shape one reading over. The GRIND crossing below is the
+            # move there, and it needs no recorded width: its door reads the
+            # defect ledger, the tasks marker and the team scan.
+            #
+            # Falling THROUGH rather than restating it, so the arm that
+            # already builds that payload — escalation notice, cap seal,
+            # latent backlog and all — stays the one builder of it. The
+            # `run_streams` arm below is stepped over on this reading for the
+            # reason this arm exists (D-117 / GI-009): a roster nothing
+            # recorded is not a roster the lead can be told to run.
+            if open_count == 0:
+                return {
+                    "phase": "F2",
+                    "action": "record_inspect_width",
+                    # lead-stalls GI-008 / FR-007 — the reason, not the hint:
+                    # the hint is the remedy written out as calls, and the
+                    # header above is that remedy as the list the lead makes.
+                    "instructions": f"INSPECT phase: {streams['reason']}.",
+                    "details": {
+                        "unrecorded_width": True,
+                        "inspect_mode": "",
+                        "inspect_rule": "",
+                        "missing_streams": ["inspect_mode"],
+                    },
+                }
+        elif not streams["complete"]:
             return {
                 "phase": "F2",
                 "action": "run_streams",
+                # lead-stalls GI-008 / D-024 — `run_streams` is BRANCHED (D-019),
+                # so this block takes the `_BRANCHED_ACTION_CONTEXT` rule the two
+                # other branched arms took in D-005: it names no next call. It
+                # read "Missing: trace prove test ... Spawn agents using the
+                # agent_configs below" directly beneath a `live` header saying
+                # those streams were running and that spawning them again runs
+                # them twice — one payload, two imperatives. A stream records
+                # itself when it FINISHES, so "unrecorded" is what the count
+                # measures, not "missing"; the header says which of running or
+                # unspawned it is. The spawn rules live in the `idle` branch.
                 "instructions": (
                     f"INSPECT phase ({streams.get('inspect_mode') or 'FULL'} width"
                     f"{', rule ' + streams['inspect_rule'] if streams.get('inspect_rule') else ''}): "
-                    f"verification streams incomplete. Missing: {streams['missing']}. "
+                    f"verification streams with no record this cycle: {streams['missing']}. "
                     f"Required this cycle: {', '.join(streams['required'])}. "
-                    "Spawn agents using the agent_configs below (model and type are ENFORCED). "
-                    "SIGHT runs in MAIN THREAD (Playwright MCP only works here) \u2014 "
-                    "navigate to URL, snapshot every page, exercise all elements, check console. "
+                    "The agent_configs below are ENFORCED (model and type) for "
+                    "every stream agent. "
                     # fallout AC-031 / GI-016 (D-165) — the same qualification the
                     # `run_streams` imperative carries, on the OTHER surface that
                     # states this rule. Left unqualified here it would re-close the
                     # exits the imperative just opened, one field along, and this is
                     # the string a lead reads FIRST.
                     "Each AGENT stream records its OWN run with Foundry-Stream "
-                    "(fallout GI-016) — confirm the record exists when the stream "
-                    "reports; never record on an AGENT's behalf. SIGHT is the "
-                    "exception and the reason is that you EXECUTED it: there is no "
-                    "sight agent, so its record is yours to make from what you "
+                    "(fallout GI-016); never record on an AGENT's behalf. SIGHT is "
+                    "the exception and the reason is that you EXECUTED it: there is "
+                    "no sight agent, so its record is yours to make from what you "
                     "measured. "
                     # fallout AC-031 (D-169) — and the hazard the parallel dispatch
-                    # creates, named where the dispatch is described.
+                    # creates, stated as the rule every reading stream is bound by.
                     "TEST rewrites the shared tree to verify the GRIND's fixes, so "
-                    "tell every reading stream to pin its findings to the HEAD sha "
-                    "and verify them against a snapshot, not the live tree."
+                    "every reading stream is bound to pin its findings to the HEAD "
+                    "sha and verify them against a snapshot, not the live tree."
+                    + _BRANCHED_ACTION_CONTEXT
                 ),
                 "details": {
                     "missing_streams": streams["missing"].split(),
@@ -2357,6 +5077,9 @@ def _compute_next_action(project_root: str) -> dict:
                     "inspect_mode": streams.get("inspect_mode", ""),
                     "inspect_rule": streams.get("inspect_rule", ""),
                     "stream_scope": streams.get("stream_scope", {}),
+                    # lead-stalls D-040 — one config per AGENT stream the
+                    # recorded roster requires, from the row its step reads,
+                    # so `test01` has one. SIGHT is the lead's own skill.
                     "agent_configs": {
                         "trace": INSPECT_TRACE_CONFIG,
                         "prove": INSPECT_PROVE_CONFIG,
@@ -2364,11 +5087,19 @@ def _compute_next_action(project_root: str) -> dict:
                             **agent_model("general-purpose", baseline="opus"),
                             "subagent_type": "general-purpose",
                         },
+                        **{
+                            stream: _stream_agent_config(stream)
+                            for stream in streams["required"]
+                            if stream not in ("trace", "prove", "test", "sight")
+                        },
                     },
                 },
             }
 
         if open_count > 0:
+            # lead-stalls D-061 — at the cap `grind_start` seals the run, and
+            # the list ends there (`_grind_start_seals`).
+            seals = _grind_start_seals(fdir)
             return {
                 "phase": "F2",
                 "action": "transition_to_grind",
@@ -2381,11 +5112,8 @@ def _compute_next_action(project_root: str) -> dict:
                         "and are carried to the F6 backlog."
                         if latent_backlog else ""
                     )
+                    + (_GRIND_SEALS_AT_CAP if seals else "")
                     + _escalation_notice(fdir, project_root)
-                    + " Call Foundry-Tasks to generate task list, "
-                    "then Foundry-Gate(phase='grind'), then "
-                    "Foundry-Phase(phase='grind_start') to clear markers and "
-                    "enter F3. Create grind team, assign tasks."
                 ),
                 "details": {
                     "open_defects": open_count,
@@ -2394,6 +5122,7 @@ def _compute_next_action(project_root: str) -> dict:
                     "latent_backlog": latent_backlog,
                     "agent_config": GRIND_AGENT_CONFIG,
                     "escalation": _escalated_classes(fdir, project_root),
+                    "seals_halted": seals,
                 },
             }
 
@@ -2411,41 +5140,60 @@ def _compute_next_action(project_root: str) -> dict:
         # D-129: and the ST-010 block a LATENT-only backlog does NOT clear,
         # said HERE — the last arm before the run leaves F2 — rather than at
         # the F6 door after ASSAY, TEMPER and NYQUIST have been spent.
-        # D-153: the RECORDED width selects which crossing the notice names,
-        # because it is the width that decides whether `inspect_start` from
-        # here is the widening re-open or a refusal.
-        still_escalated_note = _still_escalated_notice(
-            fdir, project_root, inspect_mode=f2_mode.get("mode", "")
+        # lead-stalls D-055: at DELTA width the widening re-open served below
+        # is itself a crossing that counts, so the notice only says so.
+        still = _still_escalated_classes(fdir, project_root)
+        opening = (
+            "INSPECT clean: zero blocking defects, at "
+            f"{f2_mode.get('mode') or 'FULL'} width "
+            f"(rule {f2_mode.get('rule') or 'unrecorded'})."
         )
-        if f2_mode.get("mode") == "DELTA":
+        # lead-stalls GI-008 / FR-007 (D-057) — AND A HELD CLASS AT A CLEAN FULL
+        # F2 IS SERVED THE SAME RE-OPEN. `transitions._inspect_start_
+        # preconditions` accepts it now: FULL width, a class in the union the
+        # DONE gate refuses on, nothing blocking, every stream recorded — which
+        # is this arm's state by the time it is reached, since the streams and
+        # blocking arms above answer first. It was `_escalation_hold`'s
+        # `escalation_held` (NONE) with nothing open, and a GRIND that
+        # dispatched nobody with a LATENT record open; the re-open is one
+        # crossing where the GRIND was two, and it is the only one with
+        # nothing open. Built here rather than in `_escalation_hold` so the
+        # action has one payload builder.
+        delta = f2_mode.get("mode") == "DELTA"
+        if delta or still:
             return {
                 "phase": "F2",
                 "action": "widen_inspect",
                 "instructions": (
-                    f"INSPECT clean at DELTA width (cycle {f2_mode.get('cycle', '?')}, "
-                    f"rule {f2_mode.get('rule', '?')}): zero blocking defects."
+                    (
+                        f"INSPECT clean at DELTA width (cycle "
+                        f"{f2_mode.get('cycle', '?')}, rule "
+                        f"{f2_mode.get('rule', '?')}): zero blocking defects."
+                        if delta else opening
+                    )
                     + carried
-                    + still_escalated_note
+                    + _still_escalated_notice(
+                        fdir, project_root, still, served="widen",
+                    )
                     # D-169: the condition stated is the one both ASSAY doors
                     # evaluate — the recorded MODE — not the rule. A FULL
                     # INSPECT recorded with rule verifier_touched opens ASSAY,
                     # and telling the lead otherwise buys a widening cycle
                     # nothing asked for.
-                    + " ASSAY is only opened by an INSPECT whose recorded mode "
-                    "is FULL, so call Foundry-Phase(phase='inspect_start') "
-                    "again from F2. That crossing advances the cycle counter, "
-                    "sweeps the WHOLE evidence corpus, records FULL and names "
-                    "the full roster — run exactly the roster it names, then "
-                    "Foundry-Phase(phase='inspect_clean')."
+                    + (
+                        " ASSAY is only opened by an INSPECT whose recorded mode "
+                        "is FULL, and `inspect_start` from F2 is the widening "
+                        "re-open: it advances the cycle counter, sweeps the WHOLE "
+                        "evidence corpus, records FULL and names the full roster."
+                        if delta else _HELD_CLASS_REOPEN
+                    )
                 ),
                 "details": {
                     "open_defects": 0,
                     "latent_backlog": latent_backlog,
                     # D-129: machine-readable beside the sentence, so a reader
                     # never has to parse prose to learn what still blocks DONE.
-                    "still_escalated_classes": _still_escalated_classes(
-                        fdir, project_root
-                    ),
+                    "still_escalated_classes": still,
                     "inspect_mode": f2_mode.get("mode", ""),
                     "inspect_rule": f2_mode.get("rule", ""),
                     "agent_configs": {
@@ -2459,26 +5207,25 @@ def _compute_next_action(project_root: str) -> dict:
                 },
             }
 
+        # lead-stalls GI-008 / FR-007 (D-055) — A HELD CLASS DOES NOT GO ON TO
+        # ASSAY. ASSAY, TEMPER and NYQUIST all lead to a DONE gate that refuses
+        # it; the re-open above answers every held class here (D-057), so
+        # nothing reaching this return is held.
         return {
             "phase": "F2",
             "action": "transition_to_assay",
             "instructions": (
-                "INSPECT clean: zero blocking defects, at "
-                f"{f2_mode.get('mode') or 'FULL'} width "
-                f"(rule {f2_mode.get('rule') or 'unrecorded'})."
+                opening
                 + carried
-                + still_escalated_note
-                + " Call Foundry-Phase(phase='inspect_clean'), then "
-                "Foundry-Gate(phase='assay'). "
-                "Spawn 4 parallel assayer agents using the config below (subagent_type='foundry:assayer' — frontmatter carries opus + effort=max)."
+                + " The agent_config below is the assayer's, and its "
+                "frontmatter carries opus and effort=max."
             ),
             "details": {
                 "open_defects": 0,
                 "latent_backlog": latent_backlog,
-                # D-129, same field on the arm that opens ASSAY.
-                "still_escalated_classes": _still_escalated_classes(
-                    fdir, project_root
-                ),
+                # D-129, same field on the arm that opens ASSAY — empty on
+                # every route here now, because a held class is answered above.
+                "still_escalated_classes": still,
                 "inspect_mode": f2_mode.get("mode", ""),
                 "inspect_rule": f2_mode.get("rule", ""),
                 "agent_config": ASSAY_AGENT_CONFIG,
@@ -2486,7 +5233,19 @@ def _compute_next_action(project_root: str) -> dict:
         }
 
     elif phase == "F3":
-        if open_count > 0:
+        # lead-stalls FR-002 / CT-003 — A GRIND TEAMMATE STILL RUNNING HOLDS
+        # THE PHASE, WHATEVER THE COUNT SAYS.
+        #
+        # Teammates record their own fixes with `Foundry-Fix` and THEN write
+        # their report and their done line, so the count reaches zero while the
+        # last of them is still committing. A lead woken in that window by an
+        # earlier teammate's notification was handed `transition_to_inspect` —
+        # shut the grind team down — over the one still writing. The branched
+        # answer is owed until nobody is running, and with a count of zero only
+        # its `live` branch is reachable, so `_GRIND_DISPATCH`'s "blocking
+        # defects are open" stays true wherever it is printed.
+        grind_live = bool((agent_liveness or {}).get("waiting"))
+        if open_count > 0 or grind_live:
             # D-056 / D-072 — EVERY IMPERATIVE NAMES A CALL THE SERVER ACCEPTS.
             #
             # This arm dictated `Foundry-Fix(defect_id, cycle,
@@ -2506,6 +5265,27 @@ def _compute_next_action(project_root: str) -> dict:
             # state DELTA is reachable from. So it names the recorded width of
             # the cycle just verified and defers the next one to the crossing
             # that decides it.
+            #
+            # lead-stalls D-005 — AND IT NO LONGER NAMES THE CROSSING EITHER.
+            # `fix_defects` is a BRANCHED action, so the imperative printed
+            # above this block is chosen from the roster; this block used to
+            # carry "Teammates are fixing. Wait for completion." beside it —
+            # a bare wait naming no mechanism, under a header that had just
+            # said END YOUR TURN — and then a teardown-plus-
+            # `Foundry-Phase(phase='inspect_start')` sequence with no
+            # `Foundry-Gate(phase='inspect_start')` in it. Identical to the F1
+            # arm's defect, in the sibling. `_BRANCHED_ACTION_CONTEXT` states
+            # the rule once for both; the crossing is named by
+            # `_ACTION_IMPERATIVES["transition_to_inspect"]`, which is what
+            # this router returns once `open_count` is zero and no GRIND agent
+            # is running, and
+            # it takes its gate and its token from one `_ACTION_CROSSINGS`
+            # row so the two can never disagree.
+            #
+            # What STAYS is what the imperative cannot carry: the measured
+            # counts, the recorded width of the cycle just verified, and the
+            # `Foundry-Fix` argument shape above — bookkeeping for a call the
+            # lead makes per defect, not a next-call sequence.
             f3_mode = _recorded_inspect_mode(fdir) or {}
             return {
                 "phase": "F3",
@@ -2516,24 +5296,24 @@ def _compute_next_action(project_root: str) -> dict:
                     f"{len(blocking['unknown'])} untiered). "
                     + (
                         f"{len(latent_backlog)} LATENT defect(s) are open and "
-                        "block nothing; fix them if they are cheap, carry them "
-                        "otherwise. "
+                        "block nothing, and the F6 backlog carries every one "
+                        "still open. "
                         if latent_backlog else ""
                     )
-                    + "Teammates are fixing. Wait for completion. "
-                    "After each fix call Foundry-Fix(defect_id, cycle, "
-                    "authored_by, ...): authored_by is 'teammate' (with the "
+                    # lead-stalls GI-008 / FR-007 — the Foundry-Fix argument
+                    # shape, stated as a fact about the door rather than as a
+                    # call written out in call syntax beside the header's list.
+                    + "Each fix is recorded through the Foundry-Fix door, "
+                    "whose required arguments are defect_id, cycle and "
+                    "authored_by: authored_by is 'teammate' (with the "
                     "prompt_hash and casting_id it was dispatched for) or "
-                    "'lead' (with fix_commit). On a LIVE or untiered defect add "
-                    "adjacent_path_statement and adjacent_path_test; on a "
-                    "LATENT defect add regression_test alone — the "
+                    "'lead' (with fix_commit). A LIVE or untiered defect also "
+                    "takes adjacent_path_statement and adjacent_path_test; a "
+                    "LATENT defect takes regression_test alone — the "
                     "adjacent-path pair is NOT demanded there. "
-                    "When all done: shut down team, then "
-                    "Foundry-Phase(phase='inspect_start'), which decides and "
-                    "records the next INSPECT's width and names the roster to "
-                    "run — run exactly that roster. "
                     f"(The cycle just verified ran {f3_mode.get('mode') or 'FULL'} "
                     f"width, rule {f3_mode.get('rule') or 'unrecorded'}.)"
+                    + _BRANCHED_ACTION_CONTEXT
                 ),
                 "details": {
                     "open_defects": open_count,
@@ -2544,24 +5324,34 @@ def _compute_next_action(project_root: str) -> dict:
                     "inspect_rule": f3_mode.get("rule", ""),
                     "agent_config": GRIND_AGENT_CONFIG,
                 },
+                "agent_liveness": agent_liveness,
             }
         return {
             "phase": "F3",
             "action": "transition_to_inspect",
+            # Measured to decide this arm, so published like the one above:
+            # the stall notice reads it rather than taking a second reading.
+            "agent_liveness": agent_liveness,
+            # lead-stalls D-054 / D-055 — "all defects fixed" was false with
+            # a LATENT record open, which is this arm's ordinary state after
+            # the clean-cycle GRIND `_escalation_hold` serves: nothing blocks,
+            # so nothing is dispatched, and the backlog is still there.
             "instructions": (
-                "GRIND complete: all defects fixed. Shut down grind team, "
-                "Foundry-Team-Down, then Foundry-Gate(phase='inspect_start') — "
-                "the gate that guards this crossing, and NOT "
-                "Foundry-Gate(phase='inspect'), which guards the F1 entry and is "
-                "refused from F3 — then Foundry-Phase(phase='inspect_start') to "
-                "cross back into F2 — that call is what advances the run's cycle "
-                "counter, so skipping it leaves every subsequent record stamped "
-                "with the previous cycle. That call also sweeps the evidence "
-                "corpus and DECIDES the next INSPECT's width \u2014 run exactly the "
-                "roster it names. On a FULL cycle that is every stream; on a "
-                "DELTA cycle it is a reduced roster, and running more is wasted "
-                "rather than safer. No spot checking either way: the width is "
-                "the server's call, not yours."
+                "GRIND complete: no blocking defect is open and no GRIND agent "
+                "is running."
+                + (
+                    f" {len(latent_backlog)} LATENT defect(s) stay open and "
+                    "block nothing."
+                    if latent_backlog else ""
+                )
+                + " The crossing back into F2 is `inspect_start`, "
+                "guarded by the gate of the same name — the `inspect` gate "
+                "guards the F1 entry and is refused from F3. That transition "
+                "advances the run's cycle counter, so without it every later "
+                "record is stamped with the previous cycle, and it DECIDES the "
+                "next INSPECT's width and roster: every stream on a FULL "
+                "cycle, a reduced roster on a DELTA one, where running more is "
+                "wasted rather than safer. The width is the server's call."
             ),
             "details": {
                 "agent_configs": {
@@ -2637,13 +5427,11 @@ def _compute_next_action(project_root: str) -> dict:
                 "instructions": (
                     "ASSAY has NOT run: verdicts.json records 0 verdicts and "
                     "PROVE has not been recorded clean, so there is nothing "
-                    "yet to pass. Spawn 4 parallel foundry:assayer agents in a "
-                    "SINGLE message — each reads the spec FIRST, forms "
-                    "expectations, then reads code — and record every verdict "
-                    "with Foundry-Verdict. An empty verdict ledger is not a "
-                    "passing ASSAY: transitioning onward from here leaves F4 "
-                    "with zero requirements verified and the failure is not "
-                    "caught until the DONE gate, a whole phase later."
+                    "yet to pass. Each assayer records its verdicts through "
+                    "the Foundry-Verdict door. An empty verdict ledger is not "
+                    "a passing ASSAY: a run that left F4 from here would carry "
+                    "zero requirements verified, and nothing catches that "
+                    "until the DONE gate, a whole phase later."
                 ),
                 # No `agent_config`: `foundry:assayer` holds its own opus /
                 # effort=max frontmatter pin, so this site emits nothing and
@@ -2653,24 +5441,123 @@ def _compute_next_action(project_root: str) -> dict:
             }
 
         if non_verified > 0:
+            # lead-stalls GI-008 / FR-007 (D-053) — TWO STATES, TOLD APART BY
+            # THE COUNT THE GRIND GATE REFUSES ON.
+            #
+            # This arm chose the action from the verdict count alone and left
+            # the filing in the CONTEXT ("Sync findings as defects
+            # (Foundry-Sync)"). A verdict files no defect, so with nothing open
+            # the served list's gate refused "No open defects to grind", its
+            # phase call was refused behind it, and the next Foundry-Next
+            # served the same list: the run never left F4. The requirements
+            # whose verdicts nothing carries are published instead, and the
+            # header's first step files them (`_EACH_UNFILED_VERDICT`).
+            #
+            # lead-stalls GI-008 / FR-007 (D-054) — PER REQUIREMENT, AND ONLY A
+            # BLOCKING DEFECT CARRIES ONE. This published the filing only when
+            # the ledger held no open record at all, so one unrelated LATENT
+            # item — which the F2 arm lets through to ASSAY because it blocks
+            # nothing — suppressed the filing of every rejection, the gate
+            # passed on that item, the GRIND dispatched nobody, and ASSAY
+            # rejected the same requirement on the next lap: driven, two full
+            # laps and the rejection never filed. `_carried_requirements`
+            # answers for each requirement, and the CONTEXT's counts come from
+            # the same reading, so the sentence cannot claim a carrier the list
+            # lacks.
+            carried_by = _carried_requirements(fdir)
+            rejected = [
+                str(r.get("id"))
+                for r in verdicts.get("requirements", [])
+                if r.get("verdict") != "VERIFIED"
+            ]
+            unfiled = [rid for rid in rejected if rid not in carried_by]
+            carriers = sorted({
+                did for rid in rejected for did in carried_by.get(rid, [])
+            })
+            carried_count = len(rejected) - len(unfiled)
             return {
                 "phase": "F4",
                 "action": "assay_failed_loop_back",
                 "instructions": (
-                    f"ASSAY found {non_verified}/{total} non-verified requirements. "
-                    "Sync findings as defects (Foundry-Sync), "
-                    "call Foundry-Gate(phase='grind') then "
-                    "Foundry-Phase(phase='assay_fail') — the ASSAY-rejection door "
-                    "into F3, which clears every stream marker and is bounded by "
-                    "the same --max-cycles cap `grind_start` is. "
-                    "Fix defects, then FULL INSPECT, then ASSAY again. "
-                    "NO SPOT CORRECTIONS \u2014 the entire verification stack re-runs."
+                    f"ASSAY found {non_verified}/{total} non-verified "
+                    "requirements. "
+                    + (
+                        f"{carried_count} of them are carried by open "
+                        f"blocking defect(s) ({', '.join(carriers)}). "
+                        if carriers else ""
+                    )
+                    + (
+                        f"{len(unfiled)} are carried by no open blocking "
+                        f"defect ({', '.join(unfiled)}), so the list above "
+                        "opens by filing them."
+                        if unfiled else
+                        "No requirement ASSAY rejected is left without one."
+                    )
+                    + " The ASSAY-rejection door into F3 clears every stream "
+                    "marker and is bounded by the same --max-cycles cap "
+                    "`grind_start` is, and the whole verification stack "
+                    "re-runs after the GRIND: a FULL INSPECT, then ASSAY "
+                    "again. NO SPOT CORRECTIONS."
                 ),
                 "details": {
                     "non_verified": non_verified, "total": total,
+                    "unfiled_verdicts": unfiled,
+                    "carrying_defects": carriers,
                     "agent_config": GRIND_AGENT_CONFIG,
                 },
             }
+
+        # lead-stalls GI-008 / FR-007 (D-060) — A SHORT LEDGER IS AN ASSAY
+        # THAT HAS NOT FINISHED, answered as the empty one above is.
+        #
+        # Every RECORDED verdict VERIFIED says nothing about the ones never
+        # recorded: an assayer group that recorded part of its ids leaves
+        # fewer verdicts than the spec declares, and the DONE gate refuses
+        # exactly that ("Only N verdicts but spec has M requirements"). Every
+        # crossing below walks on toward that gate: driven at 3184d1c,
+        # `transition_to_done` ran its strip and commit after the refusal and
+        # `run_temper` / `run_nyquist` were re-served every lap, with the exit
+        # (assay the unrecorded ids) named only in the refusal hint. The count
+        # is the gate's own comparison, over the ids `_spec_requirement_ids`
+        # declares, taken after the auto-pass above has had its chance to
+        # fill the ledger. Asked before the held class and the GRIND crossing
+        # because ASSAY's own list is the one still owed.
+        # lead-stalls D-062 — ONE BODY, and F5 / F5.5 ask it too. The arm
+        # written here read the ledger inline; the state it answers is
+        # reachable from all three phases, and a rung only one of them makes is
+        # what D-062 was.
+        short = _short_ledger_assay(fdir, project_root, state, "F4")
+        if short is not None:
+            return short
+
+        # lead-stalls GI-008 / FR-007 (D-055) — every crossing below walks on
+        # toward a DONE gate that refuses a held class, so a held class is
+        # answered first, while the road back to its crossing is shortest.
+        held = _escalation_hold(
+            fdir, project_root, "F4",
+            blocking, "ASSAY passed: all requirements verified.",
+            GRIND_AGENT_CONFIG,
+        )
+        if held is not None:
+            return held
+
+        # lead-stalls GI-008 / FR-007 (D-058) — A PASSING ASSAY WITH A
+        # BLOCKING DEFECT OPEN IS THE GRIND CROSSING, not the crossing the
+        # flags pick. Every requirement VERIFIED says nothing about the
+        # ledger: an assayer mirrors a research deviation into it as a
+        # defect, and an adjudicated DEFECT observation is routed to GRIND,
+        # with no rejected verdict beside either. Driven at 62d2834,
+        # `transition_to_temper` was refused at its gate and
+        # `transition_to_done` ran its strip and commit after the refused
+        # DONE gate, and the next Foundry-Next served the same list again.
+        # The exit was named only in a refusal hint. `_escalation_hold`
+        # above answers None whenever something blocks, so this is asked
+        # after it, which is the order the F5 and F5.5 arms use.
+        grind = _blocking_grind_crossing(
+            "F4", "ASSAY", blocking, GRIND_AGENT_CONFIG, fdir,
+        )
+        if grind is not None:
+            return grind
 
         temper = state.get("temper", False)
         if temper:
@@ -2679,12 +5566,7 @@ def _compute_next_action(project_root: str) -> dict:
                 "action": "transition_to_temper",
                 "instructions": (
                     "ASSAY passed: all requirements verified. --temper is set, "
-                    "so F4 routes to F5. Call Foundry-Gate(phase='temper'), then "
-                    "Foundry-Phase(phase='temper') — that call is what enters "
-                    "F5, records TEMPER's own INSPECT at FULL width and sweeps "
-                    "the evidence corpus. Editing state.json to F5 by hand "
-                    "leaves the phase's first INSPECT with no recorded mode. "
-                    "Then run TEMPER micro-domain stress testing."
+                    "so F4 routes to F5 (TEMPER micro-domain stress testing)."
                 ),
                 "details": {
                     "agent_config": {
@@ -2704,9 +5586,8 @@ def _compute_next_action(project_root: str) -> dict:
             "phase": "F4",
             "action": "transition_to_done",
             "instructions": (
-                "ASSAY passed: all requirements verified. "
-                "Call Foundry-Gate(phase='done'), update state to F6. "
-                "Generate report, append lessons, archive."
+                "ASSAY passed: all requirements verified. Neither --temper "
+                "nor --nyquist is set, so F4 crosses to F6 (DONE)."
             ),
             "details": {},
         }
@@ -2714,44 +5595,108 @@ def _compute_next_action(project_root: str) -> dict:
     elif phase == "F5":
         # A --temper --nyquist run reaches F5.5 from here; --temper alone goes
         # straight to F6. Same guard as the F4 path so the two options compose.
-        tail = (
-            "When clean, call Foundry-Gate(phase='nyquist'), update to F5.5."
-            if state.get("nyquist", False)
-            else "When clean, call Foundry-Gate(phase='done'), update to F6."
+        # lead-stalls GI-008 / FR-007 (D-050) — and the crossing is SERVED, as
+        # a step list, once `run_temper`'s own list has ended in its gate.
+        gate = "nyquist" if state.get("nyquist", False) else "done"
+        # lead-stalls D-055 — `run_temper`'s list ends in a gate whose road
+        # leads to a DONE gate that refuses a held class, so the Skill was
+        # re-served every lap. Answered before the phase's work and before
+        # its crossing, after blocking defects, which `_escalation_hold`
+        # leaves to `_post_assay_crossing`'s GRIND arm.
+        held = _escalation_hold(
+            fdir, project_root, "F5", blocking,
+            "TEMPER phase: no blocking defect is open.", GRIND_AGENT_CONFIG,
         )
+        if held is not None:
+            return held
+        # lead-stalls GI-008 / FR-007 (D-062) — a run ALREADY in F5 on a short
+        # ledger is served ASSAY's unfinished list, not F5's work behind a
+        # DONE gate that refuses it. The door now refuses the entry too
+        # (`transitions._ledger_coverage_rung`), and this is what the run that
+        # is already past it receives.
+        short = _short_ledger_assay(fdir, project_root, state, "F5")
+        if short is not None:
+            return short
+        crossing = _post_assay_crossing(
+            fdir, "F5", "TEMPER", gate, GRIND_AGENT_CONFIG,
+        )
+        if crossing is not None:
+            return crossing
         return {
             "phase": "F5",
             "action": "run_temper",
             "instructions": (
-                "TEMPER phase: micro-domain stress testing. "
-                "Decompose into domains (min 15), probe each, cross-domain test, "
-                "continuous sweep. Defects go through GRIND \u2192 INSPECT \u2192 ASSAY loop. "
-                + tail
+                "TEMPER phase: micro-domain stress testing — at least 15 "
+                "domains, each probed, with cross-domain tests and a "
+                "continuous sweep over them. What TEMPER files is fixed through the "
+                "GRIND \u2192 INSPECT \u2192 ASSAY loop. The list above ends in the "
+                f"gate out of F5, `{gate}`, and the next Foundry-Next reads "
+                "that gate's record beside the defect ledger to serve the "
+                "crossing."
             ),
-            "details": {},
+            "details": {"crossing": {"gate": gate, "token": gate}},
         }
 
     elif phase == "F5.5":
+        # lead-stalls GI-008 / FR-007 (D-081) — WHAT THE AUDITORS ESCALATED
+        # IS READ FIRST. `run_nyquist`'s list ends in the DONE gate, which
+        # passed in the same move the auditors return in, so every rung below
+        # — the gate's record above all — would carry the run past an
+        # escalation nothing filed. Asked before the hold for the same reason:
+        # filing it is owed whatever else holds the run, and the GRIND the
+        # filing opens is also the road a held class takes. lead-stalls D-083:
+        # that gate now refuses on the same `unfiled_nyquist_escalations`, and
+        # this arm is still asked first, because a gate record written before
+        # an auditor's result landed would otherwise carry the run past it.
+        escalated = _nyquist_escalation_crossing(
+            fdir, blocking, GRIND_AGENT_CONFIG,
+        )
+        if escalated is not None:
+            return escalated
+        # lead-stalls D-055 — `run_nyquist` ends in the DONE gate itself.
+        held = _escalation_hold(
+            fdir, project_root, "F5.5", blocking,
+            "NYQUIST phase: no blocking defect is open.", GRIND_AGENT_CONFIG,
+        )
+        if held is not None:
+            return held
+        # lead-stalls GI-008 / FR-007 (D-062) — the F5 twin. NYQUIST generates
+        # regression tests for VERIFIED requirements, so a ledger missing the
+        # verdicts for some of them is exactly the state this phase must not
+        # run in.
+        short = _short_ledger_assay(fdir, project_root, state, "F5.5")
+        if short is not None:
+            return short
+        crossing = _post_assay_crossing(
+            fdir, "F5.5", "NYQUIST", "done", GRIND_AGENT_CONFIG,
+        )
+        if crossing is not None:
+            return crossing
         return {
             "phase": "F5.5",
             "action": "run_nyquist",
             "instructions": (
                 "NYQUIST phase: regression tests for VERIFIED requirements that "
-                "lack automated coverage. Batch requirements by 5 and spawn one "
+                "lack automated coverage, batched by 5 with one "
                 "foundry:nyquist-auditor agent per batch. Each classifies "
                 "COVERED / UNTESTED / UNDERTESTED, generates minimal behavioral "
-                "tests, runs them, and commits the passing ones. Any "
-                "ESCALATE_IMPL_BUG result goes through the GRIND \u2192 INSPECT \u2192 "
-                "ASSAY loop. Never mark an untested requirement as passing. "
-                "When done, call Foundry-Gate(phase='done'), then "
-                "Foundry-Phase(phase='nyquist_done') to enter F6."
+                "tests, runs them, commits the passing ones and writes its "
+                "JSON summary to the result file its prompt names. An "
+                "ESCALATE_IMPL_BUG row in one of those files is filed by the "
+                "list the next Foundry-Next serves, which opens the GRIND "
+                "\u2192 INSPECT \u2192 ASSAY loop, and an untested requirement "
+                "is never marked as passing. The list above ends in the gate "
+                "out of F5.5, `done`, and the next Foundry-Next reads the "
+                "result files, then that gate's record beside the defect "
+                "ledger, to serve the crossing."
             ),
             "details": {
                 "agent_config": {
                     "subagent_type": "foundry:nyquist-auditor",
                     "description": "NYQUIST: regression tests for VERIFIED requirements",
                 },
-                "batch_size": 5,
+                "batch_size": _NYQUIST_BATCH_SIZE,
+                **_nyquist_dispatch(project_root, fdir, state),
             },
         }
 
@@ -2759,14 +5704,20 @@ def _compute_next_action(project_root: str) -> dict:
         return {
             "phase": "F6",
             "action": "done",
-            "instructions": "Foundry complete. Generate report, archive state.",
+            "instructions": (
+                "F6 DONE: the run is sealed, and the `done` transition "
+                "generated REPORT.md and archived the run."
+            ),
             "details": {},
         }
 
     return {
         "phase": phase,
         "action": "unknown",
-        "instructions": f"Unknown phase: {phase}. Check state.json.",
+        "instructions": (
+            f"The phase {phase!r} is not one the guidance engine knows: "
+            "state.json carries a value no transition writes."
+        ),
         "details": {},
     }
 
@@ -2912,10 +5863,248 @@ STALL_NOTICE_SECONDS = 180
 
 
 
-def _waiting_on_agents(project_root: str) -> dict:
+#: lead-stalls ST-004 / D-020 — THE VERDICT `Foundry-Accept-Casting` RECORDS,
+#: AS THIS READER SPELLS IT.
+#:
+#: `evidence.py#_record_acceptance_verdict` writes one `handoffs.jsonl` record
+#: per JUDGED acceptance, `event` "acceptance" and `destination`
+#: ``casting-{id}-accepted`` or ``casting-{id}-refused``; the rungs that refuse
+#: the CALL (no run, no `casting_commit`, a stale spec hash) write nothing. The
+#: writer is a verifier module and this one is lifecycle, so neither may import
+#: the other's spelling (AC-061): each is declared once on its own side and
+#: `tests/orchestration/test_guidance_imperatives.py` drives the real writer
+#: into this reader so the two cannot drift apart unseen.
+_ACCEPTANCE_EVENT = "acceptance"
+_ACCEPTANCE_VERDICTS = ("accepted", "refused")
+
+
+def _acceptance_destination(casting_id: str, verdict: str) -> str:
+    """The `destination` the writer records for ``verdict`` on ``casting_id``,
+    built whole from the manifest id — nothing parses an id back out."""
+    return f"casting-{casting_id}-{verdict}"
+
+
+def _acceptance_verdicts(fdir: Path) -> dict[str, tuple[int, object]] | None:
+    """``{destination: (file position, timestamp)}`` for the LAST acceptance
+    record per destination, or ``None`` when the ledger cannot be decoded."""
+    records, problem = read_jsonl(fdir / "handoffs.jsonl")
+    if problem is not None:
+        return None
+    latest: dict[str, tuple[int, object]] = {}
+    for position, record in enumerate(records):
+        destination = record.get("destination")
+        if record.get("event") == _ACCEPTANCE_EVENT and isinstance(destination, str):
+            latest[destination] = (position, record.get("timestamp"))
+    return latest
+
+
+def _moment(value: object) -> datetime | None:
+    """An ISO-8601 timestamp as an aware UTC datetime, or ``None``. Total."""
+    if not isinstance(value, str):
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.strip())
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def _owed_acceptances(
+    fdir: Path, castings: list[tuple[str, str]], done_at: dict[str, object]
+) -> dict:
+    """``{"cast_refused": [...], "cast_unaccepted": [...]}`` — lead-stalls D-020.
+
+    For every casting whose ledger has declared itself done, the LAST verdict
+    recorded for it decides:
+
+      * ``-accepted``                              -> built; owes nothing.
+      * ``-refused`` no older than the done line   -> ``cast_refused``: nobody
+        has touched it since the refusal, so it is re-dispatched.
+      * ``-refused`` OLDER than the done line      -> ``cast_unaccepted``: the
+        teammate answered the refusal and declared itself done again.
+      * no verdict                                 -> ``cast_unaccepted``.
+
+    `>=` because the teammate's done line is written BEFORE the call that
+    refuses it and may carry only whole seconds. A pair that cannot be ordered
+    reads as ``cast_unaccepted``: re-accepting a refused casting buys one more
+    refusal, which records a verdict that CAN be ordered, while re-dispatching a
+    re-worked one buys a whole teammate cycle.
+
+    NOT a reading at all (both keys absent) when `handoffs.jsonl` cannot be
+    decoded — `_artifact_guard` refuses that run before the router is reached,
+    and a reader that guessed "nothing accepted" would re-open every casting.
+    """
+    latest = _acceptance_verdicts(fdir)
+    if latest is None:
+        return {}
+    refused: list[str] = []
+    unaccepted: list[str] = []
+    # `castings` is ``[(casting id, ledger agent id), ...]`` in manifest wave
+    # order. Published as CASTING ids — the value `Foundry-Accept-Casting` and
+    # `Foundry-Spawn-Teammate` take — never as ledger agent ids.
+    for casting_id, agent_id in castings:
+        if agent_id not in done_at:
+            continue
+        verdicts = [
+            (*latest[destination], verdict)
+            for verdict in _ACCEPTANCE_VERDICTS
+            if (destination := _acceptance_destination(casting_id, verdict)) in latest
+        ]
+        if not verdicts:
+            unaccepted.append(casting_id)
+            continue
+        _position, stamp, verdict = max(verdicts, key=lambda row: row[0])
+        if verdict == "accepted":
+            continue
+        refused_at = _moment(stamp)
+        finished_at = _moment(done_at[agent_id])
+        if refused_at and finished_at and refused_at >= finished_at:
+            refused.append(casting_id)
+        else:
+            unaccepted.append(casting_id)
+    return {"cast_refused": refused, "cast_unaccepted": unaccepted}
+
+
+def _cast_wave_position(
+    project_root: str,
+    roster_ids: set[str],
+    done_ids: set[str],
+    done_at: dict[str, object] | None = None,
+) -> dict:
+    """Where the run stands in its CAST waves (lead-stalls D-009 / D-010).
+
+    Returns ``{"cast_wave_pending": int | None, "cast_wave_built": int | None}``,
+    plus ``cast_refused`` / ``cast_unaccepted`` (lead-stalls D-020, see
+    `_owed_acceptances`) whenever the manifest answered and ``done_at`` — the
+    done line's timestamp per done agent — was supplied:
+
+      * ``cast_wave_pending`` — the LOWEST manifest wave holding a casting that
+        has not written a terminal ``"done": true`` line, and ``0`` when every
+        wave has. That is the branch question `_branch_state` asks, and the
+        number `{wave}` carries into the dispatch the lead is then handed.
+      * ``cast_wave_built`` — the HIGHEST wave with a casting in the roster at
+        all, which is the team name the wave-complete branch tears down.
+      * ``None`` for both when no manifest answered, which routes `_branch_state`
+        back to the roster reading it shipped with rather than to a guess.
+
+    WHY THE LEDGER'S OWN TERMINAL LINE AND NOT `spawns.log`. A dispatch record
+    and a seeded ledger are both written by `Foundry-Cast-Wave` BEFORE the lead
+    spawns a single Agent, so either one read as "this wave is dispatched" would
+    answer yes for a lead standing between steps (3) and (4) of its own
+    sequence — and the wave it would then be sent to dispatch is the NEXT one,
+    over a wave nothing has built. The teammate's own `"done": true` is the only
+    signal in the run that a casting was WORKED, and the progress protocol every
+    spawn prompt carries is what puts it there. A wave whose teammate died mid
+    work therefore stays pending and is re-dispatched, which is the answer that
+    state is owed.
+
+    NEVER RAISES, for `_waiting_on_agents`'s reason: a reader that cannot answer
+    must not be able to claim a wave is finished, so every failure path answers
+    ``None`` and the caller falls back.
+    """
+    blank = {"cast_wave_pending": None, "cast_wave_built": None}
+    try:
+        # Lazily, like the `foundry_liveness` import below it and for the same
+        # reason: this module is imported BY `foundry_spawn` at call time, and a
+        # ledger id spelled a second time here is how the two drift apart.
+        from foundry_mcp.tools.foundry_spawn import _agent_id_for_casting
+
+        fdir = get_run_dir(project_root)
+        if not fdir or not fdir.exists():
+            return blank
+        manifest = _load_json(fdir / "castings" / "manifest.json")
+        waves = manifest.get("waves") if isinstance(manifest, dict) else None
+        if not isinstance(waves, list):
+            return blank
+        numbered: list[tuple[int, list]] = []
+        for entry in waves:
+            if not isinstance(entry, dict):
+                continue
+            number = entry.get("wave")
+            ids = entry.get("casting_ids")
+            if isinstance(number, bool) or not isinstance(number, int):
+                continue
+            if number < 1 or not isinstance(ids, list) or not ids:
+                continue
+            numbered.append((number, ids))
+        # A `waves` list that held nothing usable is a manifest that did not
+        # answer, NOT a run with no waves left: `0` here would read as "every
+        # wave is done" and hand the lead the teardown.
+        if not numbered:
+            return blank
+        pending = [
+            number for number, ids in numbered
+            if any(_agent_id_for_casting(cid) not in done_ids for cid in ids)
+        ]
+        built = [
+            number for number, ids in numbered
+            if any(_agent_id_for_casting(cid) in roster_ids for cid in ids)
+        ]
+        position = {
+            "cast_wave_pending": min(pending) if pending else 0,
+            "cast_wave_built": max(built) if built else 0,
+        }
+        # lead-stalls D-020 — a done line is not a built casting until it is
+        # accepted. Measured over the SAME manifest castings the position was,
+        # in wave order, so `{casting}` names the lowest wave's first.
+        if done_at is not None:
+            position.update(_owed_acceptances(
+                fdir,
+                [
+                    (str(cid), _agent_id_for_casting(cid))
+                    for _number, ids in sorted(numbered, key=lambda w: w[0])
+                    for cid in ids
+                ],
+                done_at,
+            ))
+        # lead-stalls D-031 — the team the refusal's teammate belongs to, named
+        # the way `_CAST_WAVE_UNDISPATCHED` told the lead to create it, for the
+        # FIRST refused id because that is the casting `{casting}` names.
+        refused = position.get("cast_refused") or []
+        own_wave = next(
+            (
+                number for number, ids in sorted(numbered, key=lambda w: w[0])
+                if refused and refused[0] in {str(cid) for cid in ids}
+            ),
+            None,
+        )
+        if own_wave is not None:
+            position["cast_refused_team"] = f"cast-{fdir.name}-wave-{own_wave}"
+        return position
+    except Exception:  # noqa: BLE001 - a watchdog never raises into its caller
+        return blank
+
+
+def _waiting_on_agents(project_root: str, teams: dict | None = None) -> dict:
     """Is the lead waiting on live agents, or is it deliberating (FR-020)?
 
-    Returns ``{"waiting": bool, "count": int, "detail": str, "agents": [...]}``.
+    Returns ``{"waiting": bool, "count": int, "detail": str, "agents": [...],
+    "teams_active": bool, "teams_registered": [team name, ...],
+    "progressing_agents": int, "roster_agents": int,
+    "cast_wave_pending": int | None, "cast_wave_built": int | None,
+    "cast_refused": [casting id, ...], "cast_unaccepted": [casting id, ...],
+    "cast_refused_team": str}`` — the refusal and acceptance lists only when
+    the manifest answered (lead-stalls D-020), and `cast_refused_team` only
+    when `cast_refused` is non-empty (lead-stalls D-031).
+
+    lead-stalls D-028 / D-031 — ``teams`` is a `_check_active_teams` answer the
+    caller already holds. The router passes the one it routes on, so the
+    refusal branch chosen here and the team arm that reads the same scan can
+    never be two answers about one registry: with two scans, a first scan that
+    failed (read as "no team") and a second that saw the refused casting's team
+    handed the lead `cleanup_teams` over the team its refusal was owed to.
+
+    lead-stalls D-009 / D-010 — AND THE LAST TWO ARE WHY THIS ROUTINE ANSWERS
+    THE BRANCH QUESTION AT ALL. lead-stalls FR-015 is Locked on "the server
+    substitutes the right one using `_waiting_on_agents` at emission", and this
+    result carried no wave field, so CT-008's declared input could not decide
+    the branch FR-015 requires: `{"waiting": False, "roster_agents": >0}` is
+    byte-identical at "wave 1 done, wave 2 pending" and at "the final wave is
+    done". The position is measured here, on the ONE roster read this call
+    takes, rather than in a second scan the imperative and the payload could
+    disagree about.
 
     BOTH DECLARED INPUTS ARE READ; PROGRESS IS WHAT DECIDES (D-076, D-127).
     ----------------------------------------------------------------------
@@ -2972,14 +6161,24 @@ def _waiting_on_agents(project_root: str) -> dict:
     # CT-012's second declared input. Read FIRST and never raised through: a
     # scan that cannot answer must not be able to suppress a stall warning
     # either, so an unusable answer reads as "no active team".
-    try:
-        teams = _check_active_teams(project_root)
-    except Exception:  # noqa: BLE001 - a watchdog never raises into its caller
-        teams = {"active": False, "teams": []}
+    if not isinstance(teams, dict):
+        try:
+            teams = _check_active_teams(project_root)
+        except Exception:  # noqa: BLE001 - a watchdog never raises into its caller
+            teams = {"active": False, "teams": []}
     teams_active = bool(teams.get("active"))
+    # lead-stalls D-031 — the REGISTRY half alone, which is the only half that
+    # can name a team. A live pane says some teammate somewhere is up; it
+    # cannot say whose.
+    registered = teams.get("teams")
+    teams_registered = [
+        name for name in (registered if isinstance(registered, list) else [])
+        if isinstance(name, str)
+    ]
 
     try:
         from foundry_mcp.tools.foundry_spawn import (
+            STATUS_DONE,
             STATUS_NO_PROGRESS,
             STATUS_PROGRESSING,
             foundry_liveness,
@@ -2989,18 +6188,65 @@ def _waiting_on_agents(project_root: str) -> dict:
     except Exception:  # noqa: BLE001 - a watchdog never raises into its caller
         liveness = {"ok": False}
 
-    live_agents = []
+    # lead-stalls FR-015 / CT-008 — THE WHOLE ROSTER, BESIDE THE PROGRESSING
+    # SUBSET.
+    #
+    # `live_agents` answers "is the lead waiting", which is this routine's own
+    # question. `roster` answers a different one that `_cast_wave_position`
+    # needs: WHICH CASTINGS HAVE DECLARED THEMSELVES DONE. The two differ
+    # exactly where it matters — a teammate that finished is out of
+    # `live_agents` and still in the roster — and `teams_active` cannot stand in
+    # for it, because the teardown the wave-complete imperative itself names
+    # unregisters the team. Between `Foundry-Team-Down` and
+    # `Foundry-Phase(phase='cast')` a team scan reads identically to a wave that
+    # was never dispatched; a progress ledger is written once and stays written.
+    #
+    # lead-stalls D-013 — the roster is an INPUT to the position and no longer a
+    # branch of its own. `_branch_state` used to fall back to `len(roster)` when
+    # the manifest did not answer, and a count of every ledger in the run cannot
+    # express wave position, so that fallback handed a wave boundary the
+    # teardown. The count is still published for lead-stalls FR-005; it decides
+    # nothing.
+    roster = []
     if liveness.get("ok"):
-        for row in liveness.get("agents", []) or []:
-            if not isinstance(row, dict):
-                continue
-            # PROGRESSING and NO_PROGRESS both mean lines are still ARRIVING;
-            # they differ only in whether the `step` field moved. STALLED means
-            # no line at all for the threshold, DONE means finished, and
-            # NO_LEDGER / UNKNOWN mean there is no evidence — none of which is
-            # an agent to wait for.
-            if row.get("status") in (STATUS_PROGRESSING, STATUS_NO_PROGRESS):
-                live_agents.append(row)
+        roster = [
+            row for row in (liveness.get("agents", []) or [])
+            if isinstance(row, dict)
+        ]
+
+    live_agents = []
+    # lead-stalls D-009 — the two id sets `_cast_wave_position` reads, collected
+    # in the loop that already walks the roster. Gathered HERE and not in the
+    # helper because `STATUS_DONE` is bound by the import above, which the
+    # failure path skips — and on that path `roster` is empty, so this loop does
+    # not run and the helper is handed two empty sets, which is honest: nothing
+    # was measured.
+    roster_ids: set[str] = set()
+    done_ids: set[str] = set()
+    # lead-stalls D-020 — WHEN each done agent declared itself done, which is
+    # what orders a refusal against the teammate's answer to it.
+    done_at: dict[str, object] = {}
+    for row in roster:
+        agent_id = row.get("agent")
+        if isinstance(agent_id, str):
+            roster_ids.add(agent_id)
+            if row.get("status") == STATUS_DONE:
+                done_ids.add(agent_id)
+                done_at[agent_id] = row.get("last_timestamp")
+        # PROGRESSING and NO_PROGRESS both mean lines are still ARRIVING;
+        # they differ only in whether the `step` field moved. STALLED means
+        # no line at all for the threshold, DONE means finished, and
+        # NO_LEDGER / UNKNOWN mean there is no evidence — none of which is
+        # an agent to wait for.
+        if row.get("status") in (STATUS_PROGRESSING, STATUS_NO_PROGRESS):
+            live_agents.append(row)
+
+    result["roster_agents"] = len(roster)
+    # Published on BOTH return paths below, because the branch question is
+    # asked in every run state and not only in the idle ones.
+    result.update(
+        _cast_wave_position(project_root, roster_ids, done_ids, done_at)
+    )
 
     # D-127 / FR-020, stated once: PROGRESS decides. An EMPTY roster is the one
     # answer that lets the watchdog speak. A registered team with nothing
@@ -3009,6 +6255,7 @@ def _waiting_on_agents(project_root: str) -> dict:
     # this line on its own.
     if not live_agents:
         result["teams_active"] = teams_active
+        result["teams_registered"] = teams_registered
         result["progressing_agents"] = 0
         return result
 
@@ -3028,6 +6275,7 @@ def _waiting_on_agents(project_root: str) -> dict:
         # so the field carries what the scan actually answered and CT-012's
         # input set stays visible to every reader.
         "teams_active": teams_active,
+        "teams_registered": teams_registered,
         "progressing_agents": len(live_agents),
         "count": len(live_agents),
         "detail": f"oldest progress {oldest // 60}m {oldest % 60}s ago",

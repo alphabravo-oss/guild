@@ -1,0 +1,25 @@
+# evidence-cmd: cd plugins/foundry/mcp-server && uv run --with pytest pytest -p no:cacheprovider --no-header -v tests/orchestration/test_guidance_imperatives.py -k "nyquist_auditors_are_served or unfiled_auditor_escalation or escalation_a_blocking_defect or only_an_impl_bug or escalation_reader_is_total or result_rung_bites or doorless_agents or phase_work_files or decomposer_is or prompt_rungs_bite or placeholder_that_copies" 2>/dev/null | sed -E "s/ +\[ *[0-9]+%\]$//" | sed -E "s#^tests/orchestration/test_guidance_imperatives.py::##" | sed -E "s/^=+ (.*) in [0-9]+\.[0-9]+s( \([0-9:]+\))? =+$/\1/"
+# evidence-for: OT-002, FR-007, FR-008, GI-008
+
+============================= test session starts ==============================
+collecting ... collected 235 items / 218 deselected / 17 selected
+
+test_what_the_phase_work_files_is_served_the_grind_crossing[temper] PASSED
+test_what_the_phase_work_files_is_served_the_grind_crossing[nyquist] PASSED
+test_the_nyquist_auditors_are_served_as_literal_calls PASSED
+test_an_unfiled_auditor_escalation_is_served_its_filing_before_the_crossing PASSED
+test_an_escalation_a_blocking_defect_carries_is_not_filed_again PASSED
+test_only_an_impl_bug_from_this_cycle_is_filed[env] PASSED
+test_only_an_impl_bug_from_this_cycle_is_filed[debug-exhausted] PASSED
+test_only_an_impl_bug_from_this_cycle_is_filed[untestable] PASSED
+test_only_an_impl_bug_from_this_cycle_is_filed[an-earlier-cycle] PASSED
+test_the_escalation_reader_is_total PASSED
+test_the_result_rung_bites_on_an_auditor_told_no_result_file PASSED
+test_the_doorless_agents_are_the_agent_files_own PASSED
+test_the_decomposer_is_served_as_one_literal_call PASSED
+test_the_decomposer_is_pointed_at_the_procedure_that_ships PASSED
+test_the_prompt_rungs_bite_on_the_decomposition_hand_over[shipped] PASSED
+test_the_prompt_rungs_bite_on_the_decomposition_hand_over[prove-mutation] PASSED
+test_a_placeholder_that_copies_a_returned_prompt_is_a_prompt PASSED
+
+17 passed, 218 deselected

@@ -100,7 +100,7 @@ from foundry_mcp.tools.forge_spec import (
 # acceptance door moved into the verifier layer and calls the same reader, so
 # a symbol both layers read lives in `tools/artifacts.py` by GI-033's
 # arithmetic rather than in the lifecycle module that used to define it.
-from foundry_mcp.tools.artifacts import foundry_spec_hash
+from foundry_mcp.tools.artifacts import LEAD_NEXT_CALL, foundry_spec_hash
 # ...and `Foundry-Accept-Casting` is bound out of `tools/evidence.py`, the
 # module that defines the verification it runs. The door was in
 # `foundry_handoff.py` and reached `verify_evidence` across the layering rule
@@ -1310,6 +1310,34 @@ async def list_tools() -> list[Tool]:
                     "items_total": {"type": "integer"},
                     "findings_count": {"type": "integer", "default": 0},
                 },
+                # lead-stalls D-068 — THE ONLY CLOSED OBJECT IN THIS LIST, AND
+                # IT IS CLOSED BECAUSE THIS DOOR OVERWRITES RATHER THAN APPENDS.
+                #
+                # The set was open, and the dispatch lambda reads only the five
+                # properties named above, so an unknown one was neither refused
+                # by `_argument_refusal` nor read by the handler. Driven live on
+                # 1.10.1 during INSPECT c19: `Foundry-Stream(stream="prove",
+                # cycle=19, items_checked=66, items_total=66, findings=3)` — the
+                # misspelling, plus a `notes` property the schema likewise does
+                # not name — returned `"ok": true` with no mention of either,
+                # and recorded `"findings": 0` over a cycle that had three.
+                #
+                # WHY THAT IS WORSE THAN A DROPPED ARGUMENT, AND WHY THIS DOOR
+                # RATHER THAN THE FORTY OTHERS THAT ARE ALSO OPEN. The
+                # description two lines up says it: "Replaces this (stream,
+                # cycle)'s totals". A dropped argument fails to record; this one
+                # OVERWRITES the standing record with a zero, and nothing in
+                # stream-rollup.json distinguishes a truthful zero from a zeroed
+                # one — so the loss is invisible to the ledger that exists to
+                # catch it, and the reading a lead takes as licence to cross out
+                # of F2 is the one a typo manufactures.
+                #
+                # `additionalProperties: false` rather than accepting `findings`
+                # as an alias: the alias buys back one spelling and leaves every
+                # other one silent, while the refusal path already exists at the
+                # dispatch boundary, already runs before the handler is entered,
+                # and already names the property it did not expect.
+                "additionalProperties": False,
             },
         ),
         Tool(
@@ -2273,6 +2301,53 @@ def _audit_security_claim_on_refusal(name: str, arguments: dict) -> None:
         pass
 
 
+#: lead-stalls GI-005 / CT-005 / OT-006 (D-002) — THE TOOLS WHOSE EVERY
+#: RESPONSE OWES `next_call`, INCLUDING THE ONES THIS BOUNDARY FORMS ITSELF.
+#:
+#: `foundry_accept_casting` carries `LEAD_NEXT_CALL` on all twelve of its own
+#: returns, and that proof is sound over the FUNCTION. It is not a proof over
+#: the RESPONSE, because two payloads a caller receives from
+#: `Foundry-Accept-Casting` are never built inside it: the pre-dispatch schema
+#: refusal, which `_argument_refusal` composes and which returns before the
+#: handler is entered at all, and the unhandled-error banner below, which
+#: exists precisely for the case where the handler's own return never happened.
+#: Driven live: `Foundry-Accept-Casting` with `casting_id`, `spec_hash`,
+#: `prompt_hash` and `completion_report` but no `casting_commit` came back as
+#: `{error, missing_fields, invalid_fields, hint}` and nothing else — the lead
+#: reaching the end of a unit of work, handed a refusal plus a judgment task
+#: and no imperative, which is ST-003's exact shape.
+#:
+#: SPREAD AT THIS CALL SITE, NEVER INSIDE `_argument_refusal`. That helper
+#: serves EVERY registered tool, so the key added there would land on ~40 other
+#: tools' refusal envelopes — the non-additive blast radius FR-004 and NFR-002
+#: forbid — and would also change the payload two suites read from it directly
+#: (`tests/test_foundry_init.py` against Foundry-Init,
+#: `tests/test_defect_tier.py` against Foundry-Sync). Same judgement, and the
+#: same shape, as `evidence.py`'s two helper-delegating returns: the key joins
+#: at the door that owes it, and the shared rung is left byte-identical.
+#:
+#: `Foundry-Team-Down` is deliberately ABSENT. GI-003 and CT-004 scope its
+#: `next_call` to the SUCCESS payload; GI-005's every-path rule is
+#: Accept-Casting's alone, and a schema refusal is not a success.
+_NEXT_CALL_TOOLS: frozenset[str] = frozenset({"Foundry-Accept-Casting"})
+
+
+def _with_next_call(name: str, payload: dict) -> dict:
+    """``payload``, plus ``next_call`` when ``name`` is a tool that owes it.
+
+    A new dict every time rather than an in-place assignment: the refusal
+    `_argument_refusal` returns and the banner below are this boundary's to
+    read, not to edit, and a mutating rung is how one tool's response key ends
+    up on a shape another caller already holds.
+
+    Unconditional and a literal call (GI-008) — the value is the leaf's single
+    ``LEAD_NEXT_CALL`` constant, not a second spelling of it here.
+    """
+    if name not in _NEXT_CALL_TOOLS:
+        return payload
+    return {**payload, "next_call": LEAD_NEXT_CALL}
+
+
 @server.call_tool(validate_input=False)
 async def call_tool(name: str, arguments: dict) -> list[TextContent]:
     handler = _DISPATCH.get(name)
@@ -2287,7 +2362,15 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
             # a schema-invalid argument set cannot switch off the tripwire a
             # security-property claim owes.
             _audit_security_claim_on_refusal(name, arguments)
-            return [TextContent(type="text", text=format_result_blocks(name, refusal))]
+            # lead-stalls GI-005 / CT-005 / OT-006 (D-002): the handler is
+            # never entered on this path, so the key it carries on every one
+            # of its own returns cannot reach the lead from there.
+            return [
+                TextContent(
+                    type="text",
+                    text=format_result_blocks(name, _with_next_call(name, refusal)),
+                )
+            ]
 
     # D-098: the outermost net. Every handler returns named refusals as dicts
     # (the house pattern) and none is supposed to raise, but this boundary used
@@ -2300,7 +2383,13 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
     try:
         result = handler(arguments)
     except Exception as exc:
-        result = {
+        # lead-stalls GI-005 / OT-006 (D-002): the twin of the refusal above.
+        # This banner exists for the case where the handler's own return never
+        # happened, so it is the second payload a caller receives from
+        # `Foundry-Accept-Casting` that the function's twelve returns cannot
+        # speak for. Leaving it uncovered would ship the same defect one
+        # branch over, on the same rung, against the same tool.
+        banner = {
             "error": f"{name} failed: {type(exc).__name__}: {exc}",
             "hint": (
                 "This is an unhandled server-side error, not a refusal. The run "
@@ -2308,6 +2397,7 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
                 "check the run directory's JSON artifacts."
             ),
         }
+        result = _with_next_call(name, banner)
 
     # D-173: `format_result_blocks`, not `format_result`. The display half is
     # lossy by design — every formatter truncates — and this is the only rung

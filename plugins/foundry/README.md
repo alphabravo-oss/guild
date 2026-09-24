@@ -4,8 +4,8 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/foundry-4.11.0-F57C00?style=flat-square" alt="foundry 4.11.0"/>
-  <img src="https://img.shields.io/badge/foundry--mcp-1.10.0-F57C00?style=flat-square" alt="foundry-mcp 1.10.0"/>
+  <img src="https://img.shields.io/badge/foundry-4.11.1-F57C00?style=flat-square" alt="foundry 4.11.1"/>
+  <img src="https://img.shields.io/badge/foundry--mcp-1.10.1-F57C00?style=flat-square" alt="foundry-mcp 1.10.1"/>
   <img src="https://img.shields.io/badge/guild-pipeline-1E88E5?style=flat-square" alt="guild pipeline"/>
   <img src="https://img.shields.io/badge/Claude%20Code-plugin-8E44AD?style=flat-square" alt="Claude Code plugin"/>
   <img src="https://img.shields.io/badge/license-MIT-2E7D32?style=flat-square" alt="MIT license"/>
@@ -300,6 +300,16 @@ A blocked model does not fail the spawn. Claude Code checks the value against yo
 ---
 
 ## What's new
+
+### foundry 4.11.1 — the lead is never left without a next call
+
+A patch on one surface: the sentence the lead reads when it asks what to do next. Two entries in `_ACTION_IMPERATIVES` ended in a bare instruction to wait, and one of them forbade the very call that would have told the lead when the wait was over — so a lead that obeyed had no move left and the run parked with agents still building. The fix is prose and payload, not machinery: each of those entries now resolves to exactly one unconditional imperative chosen by whether teammates are actually live, and the two doors a lead passes through on the way out of a phase carry the next call on the response itself.
+
+| Adds | Where |
+|---|---|
+| **One unconditional imperative, branch-selected** — `build_castings` and `fix_defects` resolve against live agent status before the lead sees them: the teammates-live branch says that ending the turn is correct, the wave-complete branch names the literal next calls. No entry forbids `Foundry-Next`, and no lead-facing string instructs a sleep, a poll or a wait loop | `guidance.py` · `_ACTION_IMPERATIVES` |
+| **`next_call` on the payloads** — `Foundry-Team-Down`'s success response and **every** `Foundry-Accept-Casting` return path, rejections included, carry the lead's next call as a response key. Additive: no existing key was renamed or removed | `Foundry-Team-Down` · `Foundry-Accept-Casting` |
+| **One spelling, one definition** — the string lives once, in `artifacts.py`, and both doors import it rather than each keeping a copy free to drift | `artifacts.py` · `LEAD_NEXT_CALL` |
 
 ### foundry 4.11.0 — the loop stops making work for itself
 

@@ -1,0 +1,13 @@
+# evidence-cmd: python3 -c "import hashlib,json;from pathlib import Path;H=Path('plugins/foundry/hooks');J=H/'hooks.json';BD='9bcb79f730fd704c3bf1f91c868ced8eccd4f6f5dd6961228329edac705b11a2';BR=['hooks.json','pre-commit-guard.sh','session-start-serena.sh'];now=sorted(str(p.relative_to(H)) for p in H.rglob('*') if p.is_file() and p.suffix!='.pyc' and '__pycache__' not in p.relative_to(H).parts);d=hashlib.sha256(J.read_bytes()).hexdigest();hk=json.loads(J.read_text(encoding='utf-8'))['hooks'];cmds=[h['command'] for g in hk['SessionStart'] for h in g['hooks']];print('hooks.json sha256 now                '+d);print('hooks.json sha256 at base dda6154    '+BD);print('hooks.json byte-identical            '+str(d==BD));print('hooks/ roster now                    '+str(now));print('hooks/ roster at base dda6154        '+str(BR));print('files added under hooks/             '+str(sorted(set(now)-set(BR))));print('files removed from hooks/            '+str(sorted(set(BR)-set(now))));print('hook events declared                 '+str(sorted(hk)));print('SessionStart commands                '+str(cmds));print('no new hook event, no new hook file  '+str(sorted(hk)==['SessionStart'] and len(cmds)==1 and sorted(now)==sorted(BR)))"
+# evidence-for: FR-009, FR-010, NFR-001, GI-001, GI-002, OT-008, OT-009
+
+hooks.json sha256 now                9bcb79f730fd704c3bf1f91c868ced8eccd4f6f5dd6961228329edac705b11a2
+hooks.json sha256 at base dda6154    9bcb79f730fd704c3bf1f91c868ced8eccd4f6f5dd6961228329edac705b11a2
+hooks.json byte-identical            True
+hooks/ roster now                    ['hooks.json', 'pre-commit-guard.sh', 'session-start-serena.sh']
+hooks/ roster at base dda6154        ['hooks.json', 'pre-commit-guard.sh', 'session-start-serena.sh']
+files added under hooks/             []
+files removed from hooks/            []
+hook events declared                 ['SessionStart']
+SessionStart commands                ['${CLAUDE_PLUGIN_ROOT}/hooks/session-start-serena.sh']
+no new hook event, no new hook file  True

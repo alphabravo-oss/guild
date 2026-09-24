@@ -1,0 +1,21 @@
+# evidence-cmd: cd plugins/foundry/mcp-server && P=$(pwd) && T=$(mktemp -d) && trap 'find "$T" -delete' EXIT && cp -R src tests pyproject.toml "$T/" && G=src/foundry_mcp/tools/orchestration/guidance.py && N=tests/orchestration/test_guidance_imperatives.py && cd "$T" && for m in committed wave built_wave; do if [ "$m" = committed ]; then cp "$P/$G" "$G"; else sed "s/cast-{run}-wave-1'/cast-{run}-wave-{$m}'/" "$P/$G" > "$G"; fi; echo "== transition_to_cast, team names in steps (4) and (5) as: $m"; echo "  guidance.py lines differing from the committed file: $(diff "$P/$G" "$G" | grep -c '^>')"; uv run --project "$P" python -c 'import os, sys; sys.path[:0]=["src"]; from foundry_mcp.tools.orchestration import guidance as g; assert os.path.realpath(g.__file__) == os.path.realpath(sys.argv[1]); print(g._format_imperative_header("transition_to_cast", "", {}, run_name="r", phase="F0"))' "$G" > "$m.hdr" 2>/dev/null; if grep -qF "TeamCreate('cast-r-wave-1')" "$m.hdr"; then echo "  F0 header, loaded from the copy, names TeamCreate('cast-r-wave-1'): yes"; else echo "  F0 header, loaded from the copy, names TeamCreate('cast-r-wave-1'): no"; fi; if cmp -s committed.hdr "$m.hdr"; then echo "  F0 header the lead receives, same bytes as committed: yes"; else echo "  F0 header the lead receives, same bytes as committed: no"; fi; uv run --project "$P" --with pytest pytest -p no:cacheprovider --no-header --color=no --tb=no -q -rf "$N::test_transition_to_cast_keeps_wave_one_as_a_literal" "$N::test_the_wave_slots_resolve_for_every_input" "$N::test_the_audit_sees_a_team_name_the_lead_cannot_create" "$N::test_no_emitted_header_leaves_a_substitution_slot_literal" "$N::test_the_audit_sweeps_every_key_and_returns_zero" "$N::test_every_action_is_swept_in_every_run_state" 2>/dev/null | awk '$1=="FAILED"{f++; n=$2; sub(/.*::/, "", n); print "  FAILED " n; next} $1=="ERROR"{e++; n=$2; sub(/.*::/, "", n); print "  ERROR " n; next} {s=$0; gsub(/,/, " ", s); k=split(s, w, " "); for(i=2;i<=k;i++) if(w[i]=="passed") p=w[i-1]+0} END{printf "  guards run: %d, failed: %d, errors: %d\n", p+f+e, f+0, e+0}'; done
+# evidence-for: FR-015, GI-008
+# evidence-timeout: 300
+
+== transition_to_cast, team names in steps (4) and (5) as: committed
+  guidance.py lines differing from the committed file: 0
+  F0 header, loaded from the copy, names TeamCreate('cast-r-wave-1'): yes
+  F0 header the lead receives, same bytes as committed: yes
+  guards run: 6, failed: 0, errors: 0
+== transition_to_cast, team names in steps (4) and (5) as: wave
+  guidance.py lines differing from the committed file: 2
+  F0 header, loaded from the copy, names TeamCreate('cast-r-wave-1'): yes
+  F0 header the lead receives, same bytes as committed: yes
+  FAILED test_transition_to_cast_keeps_wave_one_as_a_literal
+  guards run: 6, failed: 1, errors: 0
+== transition_to_cast, team names in steps (4) and (5) as: built_wave
+  guidance.py lines differing from the committed file: 2
+  F0 header, loaded from the copy, names TeamCreate('cast-r-wave-1'): yes
+  F0 header the lead receives, same bytes as committed: yes
+  FAILED test_transition_to_cast_keeps_wave_one_as_a_literal
+  guards run: 6, failed: 1, errors: 0

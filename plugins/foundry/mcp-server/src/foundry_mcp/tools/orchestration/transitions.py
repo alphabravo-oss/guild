@@ -38,6 +38,12 @@ from foundry_mcp.tools.artifacts import (
     _artifact_guard,
     _document_transaction,
     _load_json,
+    # lead-stalls GI-008 / FR-007 (D-062) — the ONE climb the DONE gate's
+    # requirement count and the F4 router's short-ledger arm are both taken
+    # from. `_ledger_coverage_rung` asks it rather than counting the spec a
+    # third way, so the two optional-phase doors cannot disagree with the
+    # gate that refuses what they let through.
+    _spec_requirement_ids,
     _stream_marker,
 )
 from foundry_mcp.tools.foundry_state import (
@@ -70,6 +76,7 @@ from foundry_mcp.tools.orchestration.escalation import (
     _advance_escalation_exits,
     _escalated_classes,
     _record_escalation_proposals,
+    _still_escalated_classes,
 )
 from foundry_mcp.tools.orchestration.width import (
     NYQUIST_ENTRY_ROLLUP_KEY,
@@ -361,6 +368,86 @@ def _all_verified_rung(
     checklist.append({
         "check": f"all_verified (non_verified={non_verified})",
         "ok": non_verified == 0,
+    })
+
+
+
+
+def _ledger_coverage_rung(
+    ladder: "_GateLadder",
+    checklist: list[dict],
+    fdir: Path,
+    project_root: str,
+    destination: str,
+) -> None:
+    """lead-stalls GI-008 / FR-007 (D-062) — A SHORT LEDGER IS AN ASSAY THAT
+    HAS NOT FINISHED, AND THE TWO OPTIONAL-PHASE DOORS LET ONE THROUGH.
+
+    `_all_verified_rung` above asks whether every RECORDED verdict is VERIFIED
+    and never how many were recorded, so a ledger that is complete-and-clean
+    and one that is short-and-clean are the SAME state to it. The DONE gate has
+    always compared the two counts — `gates.py#_done_preconditions` refuses
+    "Only N verdicts but spec has M requirements" — and `temper` / `nyquist`
+    did not, so one door accepted what another refuses.
+
+    AND THE RUN IS THEN LOOPED, which is why this is a refusal and not a
+    tidiness. Driven at a4ded25 on a two-requirement spec with one VERIFIED
+    verdict and nothing open: `Foundry-Gate('temper')` passed, `Foundry-Phase
+    ('temper')` wrote F5, and from there `Foundry-Next` served `run_temper`
+    every lap while `Foundry-Gate('done')` refused the short ledger — with the
+    exit (assay the unrecorded ids) named only inside that refusal's hint,
+    which is the judgment task FR-007 names and GI-008 forbids. The nyquist
+    twin behaved identically at F5.5.
+
+    THIS IS THE HALF OF D-060'S OWN REMEDY THAT WAS NOT TAKEN: "Giving the
+    temper and nyquist gates the DONE gate's coverage rung would stop a short
+    ledger entering F5/F5.5." The F4 router arm landed and works; the doors
+    did not.
+
+    DECLARED AFTER `_all_verified_rung`, so on a ledger that is both short and
+    holding a THIN row the rung that speaks is the THIN row — the same order
+    the F4 router takes, where `assay_failed_loop_back` is answered before the
+    short-ledger arm. Ranked at `_GATE_RANK_VERDICTS` because it is the verdict
+    ledger, which is what ASSAY is for.
+
+    The ids come from `artifacts._spec_requirement_ids`, the one climb the DONE
+    gate's count and the F4 router arm are both taken from, so this introduces
+    no third answer to "how many requirements does this spec declare".
+    """
+    verdicts = _load_json(fdir / "verdicts.json")
+    recorded = [str(r.get("id")) for r in verdicts.get("requirements", [])]
+    declared = _spec_requirement_ids(project_root, fdir)[1]
+    unrecorded = sorted(declared - set(recorded))
+    # A spec that declares nothing is not a short ledger, it is a run with no
+    # requirements to cover — the same `spec_count > 0` guard the DONE gate
+    # makes, for the same reason: an unreadable or absent spec answers the
+    # empty set, and refusing every crossing on it would turn a read failure
+    # into a stranded run.
+    short = bool(declared) and len(recorded) < len(declared)
+    if short:
+        ladder.fail(
+            _GATE_RANK_VERDICTS,
+            (
+                f"Only {len(recorded)} verdicts but spec has {len(declared)} "
+                f"requirements. {len(declared) - len(recorded)} skipped."
+            ),
+            (
+                "ASSAY must write ALL verdicts to verdicts.json — including "
+                "THIN/PARTIAL, not just VERIFIED. Unrecorded: "
+                f"{', '.join(unrecorded)}. Each assayer records its own "
+                "through the Foundry-Verdict door; Foundry-Next at F4 serves "
+                f"that dispatch. Entering {destination} on a short ledger "
+                "carries the requirements nothing verified past the only gate "
+                "that counts them."
+            ),
+        )
+    checklist.append({
+        "check": (
+            f"verdicts_cover_the_spec (recorded={len(recorded)} "
+            f"declared={len(declared)})"
+        ),
+        "ok": not short,
+        "unrecorded_requirements": unrecorded,
     })
 
 
@@ -738,10 +825,12 @@ def _inspect_start_preconditions(fdir: Path, project_root: str) -> dict:
     """Preconditions for `inspect_start`, the GRIND -> INSPECT crossing.
 
     Accepted from EXACTLY TWO source phases — F3, the crossing ST-005 names, and
-    F2, the widening re-open of a DELTA cycle — and both advance the counter.
-    The two widening arms (nothing to widen; blocking defects) apply only to the
-    F2 arm and are stated here rather than inside the transition, so
-    `Foundry-Gate('inspect_start')` answers the same question.
+    F2, the widening re-open of a DELTA cycle or (lead-stalls D-057) of a clean
+    FULL cycle a still-ESCALATED class holds DONE shut over — and both advance
+    the counter. The widening arms (nothing to widen; the held cycle's streams;
+    blocking defects) apply only to the F2 arm and are stated here rather than
+    inside the transition, so `Foundry-Gate('inspect_start')` answers the same
+    question.
 
     D-113 / D-114 / D-116 are why the source check exists at all; see
     `_PHASE_ENTRY_SOURCES` for the drives. It is written here as its own rung
@@ -765,7 +854,8 @@ def _inspect_start_preconditions(fdir: Path, project_root: str) -> dict:
                 f"Cannot start an INSPECT from phase {phase or 'F0'} — "
                 "Foundry-Phase(phase='inspect_start') is the GRIND->INSPECT "
                 "crossing (ST-005), accepted from F3, and from F2 as the "
-                "widening re-open of a DELTA cycle. It is the call that "
+                "widening re-open of a DELTA cycle or of a clean FULL cycle "
+                "a still-ESCALATED class holds DONE shut over. It is the call that "
                 "ADVANCES the cycle counter, so from any other phase it "
                 "would record a second INSPECT decision against a cycle that "
                 "has not ended and evaluate the escalation exit arms on a "
@@ -784,30 +874,148 @@ def _inspect_start_preconditions(fdir: Path, project_root: str) -> dict:
     })
 
     widening = phase == "F2"
+    held: list[str] = []
+    # D-063 — initialised here because the recorded PROVENANCE below reads it:
+    # the decider's generic widening sentence names a preceding DELTA INSPECT,
+    # and for this arm there was no preceding INSPECT of any recorded width.
+    unrecorded_width = False
     if widening:
         recorded_now = current_inspect_mode(fdir, modes=INSPECT_MODES) or {}
-        if recorded_now.get("mode") != "DELTA":
+        recorded_width = recorded_now.get("mode")
+        # lead-stalls GI-008 / FR-007 (D-057) — A CLEAN FULL CYCLE A HELD
+        # CLASS HOLDS DONE SHUT OVER IS RE-OPENED TOO.
+        # --------------------------------------------------------------------
+        # A class still ESCALATED clears only at a crossing that advances the
+        # cycle counter (ST-001's clean arm), and this rung passed only a DELTA
+        # width. So a class persisted ESCALATED with every instance fixed, at a
+        # clean FULL F2 with nothing open, had no accepted crossing: this
+        # refused "nothing to widen", `grind_start` refused "No open defects to
+        # grind", and every list past ASSAY ends at a DONE gate that refuses
+        # the class. Driven at 3a24e45 (D-055's d055b scenario): the router
+        # answered `escalation_held`, NONE, a state nothing left.
+        #
+        # The FULL arm passes on the SAME union the DONE gate refuses on,
+        # through the leaf both read (`escalation._still_escalated_classes`),
+        # so this door and the router cannot disagree about whether a class is
+        # held. Asked only of a FULL width: a DELTA cycle is re-opened whatever
+        # is held, and an unrecorded one is refused as before. Blocking defects
+        # are the rung below, unchanged — the crossing it guards is the one
+        # the DELTA re-open makes, counter, sweep, escalation exits and all.
+        held = (
+            _still_escalated_classes(fdir, project_root)
+            if recorded_width == "FULL" else []
+        )
+        # lead-stalls GI-008 / FR-007 (D-063) — AN UNRECORDED WIDTH IS THE
+        # THIRD RE-OPEN, AND IT WAS THE ONE STATE F2 HAD NO EXIT FROM.
+        # --------------------------------------------------------------------
+        # This rung read "DELTA, or FULL with a class held" and lumped an
+        # UNRECORDED width in with the FULL-nothing-held refusal, whose hint
+        # names `inspect_clean` — a crossing `_inspect_clean_preconditions`
+        # refuses on its own unrecorded-width rung. So the router's
+        # `record_inspect_width` action, whose whole purpose is that state,
+        # served `Foundry-Gate(phase='inspect_start')` as step (1) and the gate
+        # answered with the action's own precondition: driven three laps at
+        # a4ded25 on `_arrange_inspect_width_unrecorded`, identical list,
+        # identical refusal, phase F2 throughout. The only move left was
+        # reconstructed from the refusal's hint, which is the judgment task
+        # FR-007 names and GI-008 forbids.
+        #
+        # THE RE-OPEN IS THE HONEST RECOVERY, not a waiver. Nothing recorded a
+        # width, so there is no roster, no rule and no sweep to trust; this
+        # crossing decides one — `_decide_inspect_mode(widening=True)` records
+        # FULL / final_gate — sweeps the whole corpus and names the full
+        # roster. It is SELF-LIMITING for the DELTA arm's reason: the crossing
+        # it makes records FULL, and a FULL width with nothing held refuses
+        # here, so it fires once.
+        #
+        # AND IT TAKES NO STREAMS RUNG. The held arm below needs one because
+        # ST-001's clean arm counts the cycle its crossing closes; this arm
+        # closes a cycle nothing recorded a roster for, so requiring the
+        # streams would demand a roster nothing wrote — which is the very gap
+        # (GI-009 / D-117) the `record_inspect_width` action exists to name.
+        # The blocking-defect rung below still applies, so with a defect open
+        # this crossing is refused and the GRIND door is the move; the router
+        # serves that list instead.
+        unrecorded_width = not recorded_width
+        reopenable = (
+            recorded_width == "DELTA" or bool(held) or unrecorded_width
+        )
+        if not reopenable:
             ladder.fail(
                 _GATE_RANK_WIDTH,
                 (
                     "Cannot re-open INSPECT — this cycle's recorded width is "
-                    f"{recorded_now.get('mode') or 'unrecorded'}"
+                    f"{recorded_width or 'unrecorded'}"
                     + (f" (rule {recorded_now['rule']})"
                        if recorded_now.get("rule") else "")
+                    + (
+                        " and no defect class is still ESCALATED"
+                        if recorded_width == "FULL" else ""
+                    )
                     + ", so there is nothing to widen."
                 ),
                 (
-                    "The F2->F2 re-open exists to widen a DELTA INSPECT to "
-                    "FULL before ASSAY. From a FULL cycle, call "
-                    "Foundry-Phase(phase='inspect_clean') to open ASSAY, or "
-                    "Foundry-Phase(phase='grind_start') to open a GRIND. The "
-                    "cycle counter has NOT moved."
+                    # D-057: this named `grind_start` from a FULL cycle, which
+                    # is refused whenever nothing is open — the state a lead
+                    # reading this sentence is most often in.
+                    "The F2->F2 re-open widens a DELTA INSPECT to FULL before "
+                    "ASSAY, and closes a clean FULL cycle while a defect class "
+                    "is still ESCALATED. Neither is this cycle, so "
+                    "Foundry-Phase(phase='inspect_clean') is the crossing out "
+                    "of a clean FULL F2 — it opens ASSAY. A GRIND opens on an "
+                    "open defect, through Foundry-Phase(phase='grind_start'). "
+                    "The cycle counter has NOT moved."
                 ),
             )
         checklist.append({
-            "check": f"widening_a_delta_cycle (mode={recorded_now.get('mode') or 'unrecorded'})",
-            "ok": recorded_now.get("mode") == "DELTA",
+            # D-057: named for what passes it now — a DELTA width, or a FULL
+            # one with a class held — rather than for the DELTA arm alone.
+            # D-063 adds the third: an UNRECORDED width, which prints as
+            # `mode=unrecorded` and is the recovery re-open.
+            "check": (
+                f"reopenable_cycle (mode={recorded_width or 'unrecorded'}"
+                f", held={len(held)})"
+            ),
+            "ok": reopenable,
+            "still_escalated_classes": held,
         })
+        if held:
+            # lead-stalls D-057 — AND THE CYCLE IT CLOSES WAS INSPECTED.
+            # ----------------------------------------------------------
+            # The DELTA arm limits itself: its crossing records FULL, and a
+            # FULL width refused the re-open, so it could fire once per DELTA
+            # cycle. The held arm has no such limit — every crossing it makes
+            # opens another FULL cycle with the class still held — so without
+            # this rung two back-to-back calls advance the counter twice and
+            # ST-001's clean arm clears the class over two cycles in which no
+            # stream ran. That is the old D-057 (a clean cycle counted by a
+            # call rather than by an INSPECT) through the new door. The streams
+            # this crossing clears are the ones that must have recorded first.
+            held_streams = _streams_complete(project_root)
+            if not held_streams["complete"]:
+                ladder.fail(
+                    _GATE_RANK_STREAMS,
+                    (
+                        "Cannot re-open INSPECT — "
+                        f"{', '.join(held)} still ESCALATED, and this FULL "
+                        "cycle's streams have not all recorded (missing: "
+                        f"{held_streams.get('missing') or 'unknown'}), so "
+                        "the cycle this crossing closes was never inspected."
+                    ),
+                    (
+                        "ST-001's clean arm counts the cycle this crossing "
+                        "closes as one that drew zero LIVE instances, which "
+                        "only an INSPECT that ran can show. Run every stream "
+                        "this INSPECT's recorded roster names; each AGENT "
+                        "stream records its own run with Foundry-Stream. The "
+                        "cycle counter has NOT moved."
+                    ),
+                )
+            checklist.append({
+                "check": "held_class_cycle_inspected",
+                "ok": bool(held_streams["complete"]),
+                "missing": held_streams.get("missing", ""),
+            })
         widen_blocking = _blocking_defects(fdir)
         if widen_blocking["blocking"] > 0:
             ladder.fail(
@@ -974,6 +1182,34 @@ def _inspect_start_preconditions(fdir: Path, project_root: str) -> dict:
         fdir, project_root, decided_by="inspect_start", phase="F2",
         cycle=current_cycle(fdir) + 1, widening=widening,
     )
+    if held:
+        # lead-stalls D-057 — THE RECORDED PROVENANCE NAMES THE ARM THAT FIRED.
+        # The decider's `final_gate` / widening rule is the right width and the
+        # right rule — this INSPECT precedes ASSAY — but its detail sentence
+        # says "the preceding DELTA INSPECT came back clean", which is false
+        # for a FULL cycle, and `Foundry-Context` shows the lead that sentence.
+        # D-069 and D-152 were this shape: a width that was right and a record
+        # of why that was not.
+        entry["rule_detail"] = (
+            "the F2->F2 re-open of a clean FULL INSPECT that still-ESCALATED "
+            f"class(es) {', '.join(held)} hold DONE shut over: this crossing "
+            "is the INSPECT before ASSAY, and ST-001's clean arm counts the "
+            "cycle it closes"
+        )
+    elif unrecorded_width:
+        # lead-stalls D-063 — THE SAME CORRECTION FOR THE THIRD ARM. The
+        # decider's widening sentence reads "the preceding DELTA INSPECT came
+        # back clean", and for this arm there was no preceding INSPECT of any
+        # recorded width at all: nothing wrote a mode, a rule or a roster for
+        # the cycle this crossing closes. The width is right — FULL, this
+        # INSPECT precedes ASSAY — and the recorded reason would not be, which
+        # is the shape D-057, D-069 and D-152 each cost, and the sentence is
+        # the one `Foundry-Context` shows the lead.
+        entry["rule_detail"] = (
+            "the F2->F2 re-open of an INSPECT whose width was never recorded: "
+            "no mode, rule or roster was written for this cycle, so this "
+            "crossing decides one at FULL and sweeps the whole corpus"
+        )
     evidence = _boundary_evidence_rung(
         ladder, checklist, fdir, project_root,
         entry=entry, full=entry["mode"] == "FULL", token="inspect_start",
@@ -1211,6 +1447,9 @@ def _temper_preconditions(fdir: Path, project_root: str) -> dict:
     ladder = _GateLadder()
     source = _source_phase_rung(ladder, checklist, fdir, "temper")
     _all_verified_rung(ladder, checklist, fdir, "TEMPER")
+    # lead-stalls GI-008 / FR-007 (D-062) — the DONE gate's coverage
+    # comparison, at the door that used to let a short ledger into F5.
+    _ledger_coverage_rung(ladder, checklist, fdir, project_root, "TEMPER")
     _blocking_defects_rung(ladder, checklist, fdir)
     # fallout FR-058 / AC-056 — the F5 entry opens TEMPER's first INSPECT and
     # records FULL / first_of_phase on the same terms as the F2 entry, so it
@@ -1282,6 +1521,9 @@ def _nyquist_preconditions(fdir: Path, project_root: str) -> dict:
     ladder = _GateLadder()
     source = _source_phase_rung(ladder, checklist, fdir, "nyquist")
     _all_verified_rung(ladder, checklist, fdir, "NYQUIST")
+    # lead-stalls GI-008 / FR-007 (D-062) — the temper twin's rung, at the
+    # door that used to let the same short ledger into F5.5.
+    _ledger_coverage_rung(ladder, checklist, fdir, project_root, "NYQUIST")
     _blocking_defects_rung(ladder, checklist, fdir)
 
     # fallout AC-056 / GI-002 / D-133 / D-159 — THE TERMINAL SWEEP IS A RUNG

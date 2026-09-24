@@ -950,8 +950,10 @@ def _agent_liveness_record(
     exactly when it starts pinging without progressing.
 
     ``dispatch`` is this agent's most recent overdue spawn record when one is
-    known (D-058). It exists to stop a stale terminal line retiring an agent
-    the run has since asked to work again — see the status branch below.
+    known (D-058) — for a stream, the INSPECT entry that asked this cycle's
+    roster to run, which is the only record a door-less stream has (D-065). It
+    exists to stop a stale terminal line retiring an agent the run has since
+    asked to work again — see the status branch below.
     """
     agent_id = path.stem
     ledger_path = f"{run_rel}/{PROGRESS_DIR_NAME}/{path.name}"
@@ -1121,6 +1123,62 @@ def _expected_inspect_stream_agents(fdir: Path) -> list[str]:
             continue
         expected.append(wire_id)
     return expected
+
+
+def _inspect_stream_dispatches(fdir: Path) -> dict[str, dict]:
+    """The moment this INSPECT asked its streams to work, per stream (D-065).
+
+    The stream counterpart to ``_latest_teammate_dispatches``, and it exists
+    because a stream passes through NO DOOR: it is spawned by a bare
+    ``Agent(...)`` call from the ``run_streams`` list, so nothing writes it a
+    ``spawns.log`` record and the D-058 supersede rung could never fire for
+    one. Driven at 0eeb798: ``grep -cE "trace|prove|test01|research_audit"``
+    over the run's whole ``spawns.log`` returns 0 across all 35 lines, every
+    one a ``casting_id``. A stream ledger is ONE append-only file for the whole
+    run, so a stream that wrote ``"done": true`` in cycle 17 read ``done`` in
+    cycle 19 while it was running, and every reader of that row — the lead's
+    Foundry-Liveness roster and the ``run_streams`` branch that
+    ``_waiting_on_agents`` chooses — was told nothing was running.
+
+    WHAT STANDS IN FOR THE MISSING RECORD IS THE PHASE ENTRY, and it is the
+    honest one: the streams of a cycle are asked for by the transition that
+    OPENS that cycle's INSPECT, and ``phase_times["F2"]["started_at"]`` is
+    rewritten on every ``inspect_start`` re-entry — measured on this run,
+    F2 reads 2026-09-20T20:05:49 at cycle 19 while the run itself started on
+    the 16th. That is the difference from the clock-based alternatives
+    ``foundry_liveness`` rejected for TEAMMATES above: those were rejected
+    because one F3 episode spans five GRIND cycles and expires nothing between
+    them, and F2 is re-entered once per cycle by construction.
+
+    Keyed by wire id, which is what a stream's ledger stem is. Returns
+    ``{}`` outside INSPECT and whenever the entry moment cannot be read — a
+    diagnostic never raises over its own inputs, and with no moment the
+    existing precedence stands unchanged: a terminal line still outranks every
+    age check.
+    """
+    state = _load_run_state(fdir)
+    if state.get("phase") != INSPECT_PHASE:
+        return {}
+
+    phase_times = state.get("phase_times")
+    entry = phase_times.get(INSPECT_PHASE) if isinstance(phase_times, dict) else None
+    entered = _parse_progress_timestamp(
+        entry.get("started_at") if isinstance(entry, dict) else None
+    )
+    if entered is None:
+        return {}
+
+    return {
+        wire_id: {
+            "moment": entered,
+            "record": {
+                "timestamp": entered.isoformat(),
+                "phase": "inspect",
+                "stream": wire_id,
+            },
+        }
+        for wire_id in sorted(vocab.STREAM_WIRE_IDS)
+    }
 
 
 def _missing_stream_records(
@@ -1501,8 +1559,28 @@ def foundry_liveness(
         if (now - info["moment"]).total_seconds() >= threshold
     }
 
+    # D-065 — the stream half of the same rung, kept in its OWN dict and not
+    # merged into `overdue`, because the two feed different consumers. A
+    # stream with no ledger at all is already reported by
+    # `_missing_stream_records`, which carries the `progress_protocol` block
+    # that tells the lead how to fix it; folding these rows into `overdue`
+    # would have `_missing_teammate_records` synthesize a SECOND row for the
+    # same agent, out of an artifact that does not exist. What this dict is
+    # for is the one thing `_missing_stream_records` cannot do: overrule a
+    # terminal line a stream wrote in an EARLIER cycle. The same "too early to
+    # say is silence" gate governs it, so a stream is never overruled inside
+    # the first threshold of its own INSPECT.
+    overdue_streams = {
+        wire_id: info
+        for wire_id, info in _inspect_stream_dispatches(fdir).items()
+        if (now - info["moment"]).total_seconds() >= threshold
+    }
+
     records = [
-        _agent_liveness_record(p, lines, now, threshold, run_rel, overdue.get(p.stem))
+        _agent_liveness_record(
+            p, lines, now, threshold, run_rel,
+            overdue.get(p.stem) or overdue_streams.get(p.stem),
+        )
         for p, (lines, _problem) in ledger_reads
     ]
 

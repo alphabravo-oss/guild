@@ -34,6 +34,7 @@ from foundry_mcp.tools.artifacts import (
     _load_json,
     _spec_requirement_ids,
     _stream_marker,
+    unfiled_nyquist_escalations,
 )
 from foundry_mcp.tools.foundry_state import (
     active_teams,
@@ -691,6 +692,52 @@ def _done_preconditions(
             f"{non_verified} requirement(s) not VERIFIED — THIN/PARTIAL are defects, not follow-ups",
             "Fix all non-VERIFIED requirements. Every THIN item must be fully implemented.",
         )
+
+    # lead-stalls GI-008 / FR-007 (D-083) — AN ESCALATION NOTHING FILED IS
+    # WORK THE RUN STILL OWES.
+    #
+    # A nyquist auditor reaches no Foundry door: what it escalates reaches the
+    # result file its prompt names and nothing else. D-081 taught Foundry-Next
+    # to read those files and serve the filing and the GRIND crossing, but this
+    # seal read none of them. Driven on a probe run at F5.5, with its one
+    # VERIFIED requirement escalated as ESCALATE_IMPL_BUG and the defect
+    # ledger empty: Foundry-Gate('done') PASSED once the report was
+    # generated, and Foundry-Phase('nyquist_done') and Foundry-Phase('done')
+    # each wrote F6, with the escalation still unfiled.
+    #
+    # The list is the leaf's `unfiled_nyquist_escalations`, which is the same
+    # call the router's `_nyquist_escalation_crossing` serves the filing from,
+    # so the seal refuses on exactly the ids the served list files.
+    #
+    # RANKED AT `_GATE_RANK_DEFECTS`, because what clears it is defect work: a
+    # filing, then a GRIND. It is declared BEFORE the open-defect rung, so on a
+    # tie it speaks first. That is the order Foundry-Next serves at F5.5, where
+    # the escalation's filing opens the list before any GRIND of what is
+    # already open. A lead who instead GRINDs only the open defects advances
+    # the cycle counter past this cycle's result files, and this cycle's
+    # escalation is then never filed. Only a later auditor run can find the
+    # bug again.
+    unfiled_escalations = unfiled_nyquist_escalations(fdir)
+    if unfiled_escalations:
+        ladder.fail(
+            _GATE_RANK_DEFECTS,
+            f"{len(unfiled_escalations)} requirement(s) a nyquist auditor "
+            "escalated as ESCALATE_IMPL_BUG this cycle are carried by no open "
+            f"blocking defect: {', '.join(unfiled_escalations)}",
+            "Call Foundry-Next: it serves the Foundry-Sync filing of these "
+            "escalations and the GRIND crossing that fixes them. An auditor's "
+            "escalation says the code is wrong, and the run is not done until "
+            "that is filed and fixed.",
+        )
+    checklist.append({
+        "check": (
+            "nyquist_escalations_filed "
+            f"(unfiled={len(unfiled_escalations)})"
+        ),
+        "ok": not unfiled_escalations,
+        "unfiled_escalations": unfiled_escalations,
+    })
+
     if open_count > 0:
         # FR-026 — THE STALE HINT.
         #

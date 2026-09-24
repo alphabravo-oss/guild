@@ -1814,9 +1814,11 @@ def test_a_second_inspect_start_in_one_cycle_cannot_count_a_clean_cycle_twice(ru
     ONE real cycle had ended.
 
     Both guards are asserted here, because either alone leaves the count
-    steerable: the F2->F2 call is now REFUSED on a FULL cycle, and
-    `live_clean_cycles_counted` records the closed cycles already evaluated so a
-    call that did land could not count one twice.
+    steerable: the F2->F2 call is REFUSED on a FULL cycle — and, since
+    lead-stalls D-057 admits it for a held class, refused there until the cycle
+    it closes has been inspected — and `live_clean_cycles_counted` records the
+    closed cycles already evaluated so a call that did land could not count one
+    twice.
     """
     project_root, fdir = run_env
     _escalate(fdir, project_root)
@@ -1832,11 +1834,23 @@ def test_a_second_inspect_start_in_one_cycle_cannot_count_a_clean_cycle_twice(ru
     assert entry["live_clean_cycles_counted"] == [4]
 
     # Now the call D-057 drove: inspect_start again, WITHOUT returning to F3.
+    #
+    # lead-stalls D-057 (this run's, not the D-057 above) — a FULL cycle with a
+    # class still ESCALATED IS re-openable from F2 now, so "nothing to widen"
+    # is no longer the answer here. What refuses is what that re-open requires
+    # and this state lacks: the class's LIVE instances are open (the blocking
+    # rung speaks), and no stream has recorded for the cycle the crossing
+    # would close (`held_class_cycle_inspected`), which is the rung that keeps
+    # a clean cycle counted by an INSPECT rather than by a call.
     for _ in range(2):
         _arm(fdir)
         again = foundry_mark_phase_complete("inspect_start", project_root)
         assert "error" in again, again
-        assert "nothing to widen" in again["error"]
+        assert "Cannot re-open INSPECT at full width" in again["error"], again
+        inspected = next(
+            c for c in again["checklist"] if c["check"] == "held_class_cycle_inspected"
+        )
+        assert inspected["ok"] is False, inspected
 
     entry = _escalation_entry(fdir)
     assert entry["live_clean_cycles"] == 1, "one real cycle has ended, not two"

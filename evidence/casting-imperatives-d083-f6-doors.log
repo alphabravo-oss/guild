@@ -1,0 +1,21 @@
+# evidence-cmd: cd plugins/foundry/mcp-server && uv run --with pytest pytest -p no:cacheprovider --no-header -v tests/orchestration/test_guidance_imperatives.py -k "f6_door or escalation_its_filing or filed_escalation_fixed or unfiled_auditor_escalation or escalation_a_blocking_defect or escalation_reader_is_total or router_revert_names" 2>/dev/null | sed -E "s/ +\[ *[0-9]+%\]$//" | sed -E "s#^tests/orchestration/test_guidance_imperatives.py::##" | sed -E "s/^=+ (.*) in [0-9]+\.[0-9]+s( \([0-9:]+\))? =+$/\1/"
+# evidence-for: FR-007, GI-008
+
+============================= test session starts ==============================
+collecting ... collected 235 items / 222 deselected / 13 selected
+
+test_every_router_revert_names_text_that_is_in_the_tree_exactly_once PASSED
+test_an_unfiled_auditor_escalation_is_served_its_filing_before_the_crossing PASSED
+test_an_escalation_a_blocking_defect_carries_is_not_filed_again PASSED
+test_the_escalation_reader_is_total PASSED
+test_every_f6_door_refuses_an_escalation_nothing_filed[gate-done] PASSED
+test_every_f6_door_refuses_an_escalation_nothing_filed[phase-nyquist_done] PASSED
+test_every_f6_door_refuses_an_escalation_nothing_filed[phase-done] PASSED
+test_an_escalation_its_filing_carries_leaves_the_f6_doors_to_the_ledger[gate-done] PASSED
+test_an_escalation_its_filing_carries_leaves_the_f6_doors_to_the_ledger[phase-nyquist_done] PASSED
+test_an_escalation_its_filing_carries_leaves_the_f6_doors_to_the_ledger[phase-done] PASSED
+test_a_filed_escalation_fixed_through_grind_opens_the_f6_doors_again[gate-done] PASSED
+test_a_filed_escalation_fixed_through_grind_opens_the_f6_doors_again[phase-nyquist_done] PASSED
+test_a_filed_escalation_fixed_through_grind_opens_the_f6_doors_again[phase-done] PASSED
+
+13 passed, 222 deselected

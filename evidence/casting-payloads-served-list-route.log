@@ -1,0 +1,49 @@
+# evidence-cmd: cd plugins/foundry/mcp-server && uv run --with pytest python -c 'import sys; sys.path[:0]=["src","."]; from tests.test_next_call_payloads import served_list_route_report; [print(r) for r in served_list_route_report()]' 2>/dev/null
+# evidence-for: FR-015, GI-008, US-003, ST-004, CT-003, CT-004, CT-012, OT-013
+
+each served list, walked step by step, Foundry-Next after its last step
+  Team-Down next_call is LEAD_NEXT_CALL   False
+  Team-Down next_call quotes the rule     True
+  guidance renders the same object        True
+
+  cast_refused_redispatch
+    walked                    ['Foundry-Spawn-Teammate', 'Agent', 'SendMessage', 'END YOUR TURN']
+    as the one move           True
+    actions served            ['build_castings']
+    every door answered ok    True
+    refusal sent              True
+    unresolved {slot} texts   0
+    after the end: action     build_castings
+    after the end: calls      []
+    reverted, Team-Down says 'Call Foundry-Next now.'
+      reaches its end         True
+    reverted, rules lack the one-move sentence
+      reaches its end         False
+
+  cast_wave_complete
+    walked                    ['SendMessage', 'TeamDelete', 'Foundry-Team-Down', 'Foundry-Next', 'TeamDelete', 'Foundry-Team-Down', "Foundry-Gate(phase='inspect')"]
+    as the one move           True
+    actions served            ['cleanup_teams', 'build_castings']
+    every door answered ok    True
+    refusal sent              False
+    unresolved {slot} texts   0
+    after the end: action     build_castings
+    after the end: calls      ['TeamDelete', 'Foundry-Team-Down', 'Foundry-Gate', 'Foundry-Phase']
+    reverted, Team-Down says 'Call Foundry-Next now.'
+      reaches its end         False
+    reverted, rules lack the one-move sentence
+      reaches its end         False
+
+  grind_dispatch
+    walked                    ['TeamDelete', 'Foundry-Team-Down', 'Foundry-Tasks', 'TeamCreate', 'Foundry-Team-Up', 'Foundry-Spawn-Teammate', 'Agent', 'END YOUR TURN']
+    as the one move           True
+    actions served            ['fix_defects']
+    every door answered ok    True
+    refusal sent              False
+    unresolved {slot} texts   0
+    after the end: action     fix_defects
+    after the end: calls      []
+    reverted, Team-Down says 'Call Foundry-Next now.'
+      reaches its end         False
+    reverted, rules lack the one-move sentence
+      reaches its end         False

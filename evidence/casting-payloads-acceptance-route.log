@@ -1,0 +1,219 @@
+# evidence-cmd: cd plugins/foundry/mcp-server && uv run --with pytest python -c 'import sys; sys.path[:0]=["src","."]; from tests.test_next_call_payloads import acceptance_route_report; [print(r) for r in acceptance_route_report()]' 2>/dev/null
+# evidence-for: ST-004, US-003, GI-008, US-001, GI-005, CT-005, OT-006, FR-011, CT-004, GI-003, FR-015, FR-002, ST-003, CT-003
+
+Foundry-Accept-Casting, then the Foundry-Next its next_call names
+  wave 1 = casting 1 (done); wave 2 = casting 2 (not started)
+
+  accepted, team registered
+    payload ok                  True
+    payload next_call           'Call Foundry-Next now.'
+    acceptance records          ['casting-1-accepted']
+    Foundry-Next action         cleanup_teams
+    first call named            SendMessage
+    tears the team down         True
+    dispatches wave 2           False
+    returns to casting 1        False
+    a step conditioned          False
+
+  accepted, team torn down
+    payload ok                  True
+    payload next_call           'Call Foundry-Next now.'
+    acceptance records          ['casting-1-accepted']
+    Foundry-Next action         build_castings
+    first call named            TeamCreate
+    tears the team down         False
+    dispatches wave 2           True
+    returns to casting 1        False
+    a step conditioned          False
+
+  stale_prompt_hash, team registered
+    payload ok                  False
+    payload next_call           'Call Foundry-Next now.'
+    acceptance records          ['casting-1-refused']
+    Foundry-Next action         build_castings
+    first call named            SendMessage
+    tears the team down         False
+    dispatches wave 2           False
+    returns to casting 1        True
+    a step conditioned          False
+
+  stale_prompt_hash, team torn down
+    payload ok                  False
+    payload next_call           'Call Foundry-Next now.'
+    acceptance records          ['casting-1-refused']
+    Foundry-Next action         build_castings
+    first call named            Foundry-Spawn-Teammate
+    tears the team down         False
+    dispatches wave 2           False
+    returns to casting 1        True
+    a step conditioned          False
+
+  stale_spec_hash, team registered
+    payload ok                  False
+    payload next_call           'Call Foundry-Next now.'
+    acceptance records          []
+    Foundry-Next action         build_castings
+    first call named            Foundry-Spec-Hash
+    tears the team down         False
+    dispatches wave 2           False
+    returns to casting 1        True
+    a step conditioned          False
+
+  stale_spec_hash, team torn down
+    payload ok                  False
+    payload next_call           'Call Foundry-Next now.'
+    acceptance records          []
+    Foundry-Next action         build_castings
+    first call named            Foundry-Spec-Hash
+    tears the team down         False
+    dispatches wave 2           False
+    returns to casting 1        True
+    a step conditioned          False
+
+  warned, team registered
+    payload ok                  False
+    payload next_call           'Call Foundry-Next now.'
+    acceptance records          ['casting-1-refused']
+    Foundry-Next action         build_castings
+    first call named            SendMessage
+    tears the team down         False
+    dispatches wave 2           False
+    returns to casting 1        True
+    a step conditioned          False
+
+  warned, team torn down
+    payload ok                  False
+    payload next_call           'Call Foundry-Next now.'
+    acceptance records          ['casting-1-refused']
+    Foundry-Next action         build_castings
+    first call named            Foundry-Spawn-Teammate
+    tears the team down         False
+    dispatches wave 2           False
+    returns to casting 1        True
+    a step conditioned          False
+
+  warned, then the teammate reworked it and wrote done again
+    acceptance records          ['casting-1-refused']
+    Foundry-Next action         build_castings
+    first call named            Foundry-Spec-Hash
+    sends the refusal back      False
+    returns to casting 1        True
+
+more than one wave-1 casting done, then Foundry-Next (D-025..D-027)
+  1 refused in the done line's second, team registered
+    acceptance records          ['casting-1-refused']
+    first call named            SendMessage
+    forwards casting 1's refusal  True
+    names no other casting      True
+  1 refused in the done line's second, team torn down
+    acceptance records          ['casting-1-refused']
+    first call named            Foundry-Spawn-Teammate
+    forwards casting 1's refusal  True
+    names no other casting      True
+  2 then 1 refused, team registered
+    acceptance records          ['casting-2-refused', 'casting-1-refused']
+    first call named            SendMessage
+    forwards casting 1's refusal  True
+    names no other casting      True
+  2 then 1 refused, team torn down
+    acceptance records          ['casting-2-refused', 'casting-1-refused']
+    first call named            Foundry-Spawn-Teammate
+    forwards casting 1's refusal  True
+    names no other casting      True
+  2 refused, 1 never accepted, team registered
+    acceptance records          ['casting-2-refused']
+    first call named            SendMessage
+    forwards casting 2's refusal  True
+    names no other casting      True
+  2 refused, 1 never accepted, team torn down
+    acceptance records          ['casting-2-refused']
+    first call named            Foundry-Spawn-Teammate
+    forwards casting 2's refusal  True
+    names no other casting      True
+  2 then 1 refused across two waves, only wave 2's team registered (D-036)
+    teams registered            ['cast-payloads-route-wave-2']
+    refused casting's team      cast-payloads-route-wave-1
+    first call named            Foundry-Spawn-Teammate
+    forwards casting 1's refusal  True
+    sends the refusal back      False
+
+warned, no team; the real Foundry-Spawn-Teammate, the teammate obeys (D-030)
+    routed first call           Foundry-Spawn-Teammate
+    step (2) appends the ledger True
+    rules above sanction it     True
+    teammate wrote done         True
+    Foundry-Next action         build_castings
+    first call named            Foundry-Spec-Hash
+    returns to casting 1        True
+
+each dispatch route, then its door, then Foundry-Next (D-038, D-039)
+  cast_wave
+    Foundry-Next action         build_castings
+    next_calls                  ['TeamCreate', 'Foundry-Team-Up', 'Foundry-Cast-Wave', 'Agent', 'END YOUR TURN']
+    Agent prompt blocks         [['dispatch', 'progress_protocol']]
+    spawn-order faults          []
+    door ok, ledger last lines  True ['server', 'server']
+    seed only: action, calls    build_castings []
+    seed only: counts running   True
+    woken: action               build_castings
+    woken: counts running       True
+  grind
+    Foundry-Next action         fix_defects
+    next_calls                  ['TeamDelete', 'Foundry-Team-Down', 'Foundry-Tasks', 'TeamCreate', 'Foundry-Team-Up', 'Foundry-Spawn-Teammate', 'Agent', 'END YOUR TURN']
+    Agent prompt blocks         [['dispatch', 'grind_cycle_context', 'defects', 'alignment_block', 'progress_protocol']]
+    spawn-order faults          []
+    door ok, ledger last lines  True ['server']
+    seed only: action, calls    fix_defects []
+    seed only: counts running   True
+    woken: action               fix_defects
+    woken: counts running       True
+  redispatch
+    Foundry-Next action         build_castings
+    next_calls                  ['Foundry-Spawn-Teammate', 'Agent', 'SendMessage', 'END YOUR TURN']
+    Agent prompt blocks         [['dispatch', 'progress_protocol']]
+    spawn-order faults          []
+    door ok, ledger last lines  True ['server']
+    seed only: action, calls    build_castings []
+    seed only: counts running   True
+    woken: action               build_castings
+    woken: counts running       True
+
+warned, no team registered, another project's teammate pane live (D-031)
+    registered teams            []
+    Foundry-Next action         build_castings
+    first call named            Foundry-Spawn-Teammate
+    claims a registered team    False
+
+warned, wave-1 team registered, the reading's team scan disagrees (D-028)
+  first scan raises
+    Foundry-Next action         build_castings
+    tears the team down         False
+    sends casting 1 back        True
+  first scan empty
+    Foundry-Next action         build_castings
+    tears the team down         False
+    sends casting 1 back        True
+
+foundry_accept_casting return paths that judge the casting
+  judged                        8
+  recording no verdict          0
+
+a real Foundry-Team-Up, casting 1 done, casting 2 still writing
+  stall clock fresh
+    Team-Up payload keys        ['ok', 'registered', 'total_teams']
+    Foundry-Next action         build_castings
+    first call named            NONE
+    any teardown in the payload False
+    header ends the turn        True
+  stall clock stale
+    Team-Up payload keys        ['ok', 'registered', 'total_teams']
+    Foundry-Next action         build_castings
+    first call named            NONE
+    any teardown in the payload False
+    header ends the turn        True
+
+wave 1 accepted, TeamDelete, a real Foundry-Team-Down, then Foundry-Next
+  Team-Down next_call           "Foundry-Team-Down is one step of the list Foundry-Next served you: go on to that list's next step. A list of next calls Foundry-Next serves is ONE move: make every step it names, in order, through its last step (its END YOUR TURN, or its final call), and call Foundry-Next after that last step, never as a move between two of its steps, because a Foundry-Next taken mid-list reads a run state the list has not finished moving and answers with the list again from step (1) or with a route past the steps still owed. A tool answer received inside the list is followed by the list's next step."
+  Foundry-Next action           build_castings
+  dispatches wave 2             True
+  tears the team down           False
