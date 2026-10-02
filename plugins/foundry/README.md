@@ -4,8 +4,8 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/foundry-4.11.1-F57C00?style=flat-square" alt="foundry 4.11.1"/>
-  <img src="https://img.shields.io/badge/foundry--mcp-1.10.1-F57C00?style=flat-square" alt="foundry-mcp 1.10.1"/>
+  <img src="https://img.shields.io/badge/foundry-4.11.2-F57C00?style=flat-square" alt="foundry 4.11.2"/>
+  <img src="https://img.shields.io/badge/foundry--mcp-1.10.2-F57C00?style=flat-square" alt="foundry-mcp 1.10.2"/>
   <img src="https://img.shields.io/badge/guild-pipeline-1E88E5?style=flat-square" alt="guild pipeline"/>
   <img src="https://img.shields.io/badge/Claude%20Code-plugin-8E44AD?style=flat-square" alt="Claude Code plugin"/>
   <img src="https://img.shields.io/badge/license-MIT-2E7D32?style=flat-square" alt="MIT license"/>
@@ -300,6 +300,15 @@ A blocked model does not fail the spawn. Claude Code checks the value against yo
 ---
 
 ## What's new
+
+### foundry 4.11.2 — a long evidence sweep no longer disconnects the server
+
+A one-argument patch to the evidence runner. `_run_command_with_timeout` started every evidence command with the server's own stdin, which is the MCP stdio transport. An inherited file descriptor shares its file status flags with the parent, so an npm-driven command that set its stdin non-blocking set the server's transport non-blocking too. After a long sweep the server's next read failed and the server exited silently; the client reported the plugin as disconnected and the run had to be resumed with `Foundry-Init(resume=…)` ([#20](https://github.com/alphabravo-oss/guild/issues/20)).
+
+| Adds | Where |
+|---|---|
+| **Evidence commands get `/dev/null` as stdin** — no child of the runner can reach the transport any more. Evidence commands take no interactive input, so no command loses anything | `worktree_helpers.py` · `_run_command_with_timeout` |
+| **A regression test that fails without the fix** — it points the parent's fd 0 at a pipe, then checks that the child's stdin is `/dev/null` and that a child setting `O_NONBLOCK` leaves the parent's flags unchanged | `tests/test_runner_stdin.py` |
 
 ### foundry 4.11.1 — the lead is never left without a next call
 
