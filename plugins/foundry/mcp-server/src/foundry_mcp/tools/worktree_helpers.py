@@ -353,6 +353,14 @@ def _run_command_with_timeout(
         one that skips it runs unparsed commands with no door left to notice,
         and one that is merely unwritten leaves the next reader an enumeration
         that has now been short twice.
+      - ``stdin=subprocess.DEVNULL`` because the server's own stdin is the
+        MCP stdio transport. An inherited fd 0 is the SAME open file
+        description as the server's, so a child that flips its flags (Node,
+        and so every npm-driven evidence command, sets ``O_NONBLOCK`` on
+        stdio) flips them for the server too. The server's next read then
+        fails with ``EAGAIN`` and it exits silently after a long sweep, which
+        the client reports as a disconnect. An evidence command has no
+        interactive input, so ``/dev/null`` takes nothing away from it.
       - ``stderr=subprocess.STDOUT`` merges streams (single-string compare).
       - ``text=True, encoding='utf-8', errors='replace'`` makes binary or
         non-UTF-8 output survive comparator entry.
@@ -377,6 +385,7 @@ def _run_command_with_timeout(
         cmd,
         shell=True,
         cwd=str(cwd),
+        stdin=subprocess.DEVNULL,  # never the server's stdio pipe; see docstring
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,  # merge stderr→stdout per CONTEXT.md
         text=True,

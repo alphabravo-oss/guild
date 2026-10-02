@@ -374,11 +374,20 @@ def test_the_roster_walk_actually_sees_the_files_it_judges() -> None:
 #: the number is checked against the MEASURED change below and not against the
 #: roster beside it: two literals in one file agree with each other by
 #: construction, which is the whole of D-071.
-SOURCE_FILE_CAP = 11
+#:
+#: FIFTH RULING, 2026-10-02, the 4.11.2 patch: eleven to TWELVE. guild#20 --
+#: the evidence runner handed the MCP stdio transport to every evidence
+#: command as its stdin, so an npm child that set its stdin non-blocking set
+#: the server's transport non-blocking too, and the server exited after a
+#: long sweep. The fix is one argument on the one `Popen` that launches an
+#: evidence command, which lives in `tools/worktree_helpers.py` and in none
+#: of the eleven. This ruling is the maintainer's to confirm on the PR, not
+#: one a lead-stalls spec amendment made first.
+SOURCE_FILE_CAP = 12
 
 #: The source files this release is sanctioned to touch, repo-relative and
 #: POSIX-spelled. Four were anticipated when lead-stalls NFR-001 was written;
-#: seven were compelled afterwards and are the reason the cap moved, four times.
+#: eight were compelled afterwards and are the reason the cap moved, five times.
 #: Each entry says which it is, because a roster nobody can audit is just a
 #: longer number -- and since D-071 the number comes from the measured change,
 #: so what this set contributes is exactly the part a diff cannot: WHY.
@@ -424,10 +433,14 @@ SANCTIONED_SOURCE_FILES = frozenset(
         # list it refuses on lives in `artifacts.py`, already on this roster,
         # because the verifier and lifecycle layers may not reach each other.
         "plugins/foundry/mcp-server/src/foundry_mcp/tools/orchestration/gates.py",
+        # Compelled by guild#20 in the 4.11.2 patch: `_run_command_with_timeout`
+        # is the only launch of an evidence command, and its child must get
+        # /dev/null as stdin rather than the server's stdio transport.
+        "plugins/foundry/mcp-server/src/foundry_mcp/tools/worktree_helpers.py",
     }
-)  # 11 items
+)  # 12 items
 
-#: The three sanctioned files that carry no `lead-stalls `-qualified citation,
+#: The four sanctioned files that carry no `lead-stalls `-qualified citation,
 #: so the citation walk cannot see them. `directives.py` and `foundry_spawn.py`
 #: cite their work by the bare run-local defect id, which the convention in
 #: `tests/test_spec_id_convention.py` permits and which is not scoped to this
@@ -446,8 +459,10 @@ UNCITED_SANCTIONED_FILES = frozenset(
         "plugins/foundry/mcp-server/src/foundry_mcp/tools/orchestration/directives.py",
         "plugins/foundry/mcp-server/src/foundry_mcp/tools/foundry_spawn.py",
         "plugins/foundry/scripts/serena-daemon.sh",
+        # The 4.11.2 patch cites its issue, guild#20, not a lead-stalls id.
+        "plugins/foundry/mcp-server/src/foundry_mcp/tools/worktree_helpers.py",
     }
-)  # 3 items
+)  # 4 items
 
 #: What counts as source at all. Anything else in the change -- a manifest, a
 #: lockfile, a README, an evidence log -- is outside the cap because the cap is

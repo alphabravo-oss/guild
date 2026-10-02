@@ -71,8 +71,8 @@ MARKETPLACE = REPO_ROOT / ".claude-plugin" / "marketplace.json"
 
 # The release declaration. These two literals ARE the release; every site is
 # judged against them, and against each other.
-SERVER_VERSION = "1.10.1"
-PLUGIN_VERSION = "4.11.1"
+SERVER_VERSION = "1.10.2"
+PLUGIN_VERSION = "4.11.2"
 
 # The dependency ceiling that keeps the bundled server on the 1.x protocol
 # library. server.py uses mcp's 1.x low-level decorator API, which 2.0.0
