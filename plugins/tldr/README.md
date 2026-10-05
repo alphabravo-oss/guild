@@ -36,7 +36,13 @@ So tldr is **on by default, every session, without being asked.** Turning it off
 
 ## What it does
 
-Two hooks over one ruleset:
+Three hooks over one ruleset: two that shape the answer before it is written,
+and one that checks what came out.
+
+The third exists because the first two cannot fail loudly. They put rules in
+front of the model and hope. On a dense question the model trades brevity for
+completeness, delivers six screens, and nothing notices — the ruleset was
+loaded, in context, and ignored. The Stop hook is the part that says no.
 
 ```mermaid
 flowchart LR
@@ -51,9 +57,13 @@ flowchart LR
     up -->|on| remind["One-line reminder"]
     up -->|off| override["OVERRIDE: ruleset suspended,<br/>answer in default style"]
     up -->|verbose| exempt["EXEMPT this turn,<br/>clear flag → on"]
-    remind --> out([Response])
-    override --> out
+    remind --> draft([Draft response])
+    override --> out([Delivered])
     exempt --> out
+    draft --> stop[Stop hook<br/>scripts/length-gate.py]
+    stop -->|within budget| out
+    stop -->|over budget, once| cut["BLOCK: rewrite it shorter"]
+    cut --> out
 ```
 
 The split matters. The ruleset loads **once per session** because sending ~150 lines of style rules on every turn costs more than it shapes. The per-turn hook is **one line** and exists for a single reason: a session that already loaded the ruleset will keep obeying it, so `/tldr:off` has to put an explicit override in front of the model. A state file alone would only take effect next session.
@@ -111,7 +121,28 @@ Restart the session (or run `/clear`) so the SessionStart hook fires. That is th
 | `/tldr:on` | Re-enable shaping (this is the default) |
 | `/tldr:off` | Suspend shaping for the rest of this session |
 | `/tldr:verbose` | Long form for the **next turn only** — auto-reverts |
+| `/tldr:gate-off` | Stop blocking over-long answers; keep shaping them |
+| `/tldr:gate-on` | Block them again (this is the default) |
 | `/tldr:help` | Full reference |
+
+### The length gate
+
+`scripts/length-gate.py` runs on Stop, measures the response, and blocks it once
+if it busts a budget:
+
+| Budget | Limit | Why |
+|---|---|---|
+| Prose words | 400 | The writing. Fenced code, tables and quotes are excluded — a long function or a data table is content, not padding |
+| Headings | 3 | A short answer does not need chapters |
+| List items | 5 | Rule 9: past five, a list becomes a wall |
+
+It stands down for a `/tldr:off` session, a `/tldr:verbose` turn, a prompt that
+asks for depth ("explain", "walk me through", "what are my options"), and a
+one-shot `~/.claude/.tldr-trust-me`.
+
+**It never blocks the same turn twice.** A user waiting on an answer is worse
+served by a gate that will not let one out than by a long one, so the second
+attempt is delivered whatever its length.
 
 ### State file
 

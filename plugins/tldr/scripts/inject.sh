@@ -28,7 +28,11 @@ EOF
     ;;
   verbose)
     # One-shot exemption — clear the flag so the next turn is shaped again.
+    # The Stop gate runs after this has already been cleared, so it would see a
+    # plain "on" and block the very response the exemption was granted for.
+    # Leave it a marker, which it consumes.
     rm -f "${STATE_FILE}"
+    : > "${HOME}/.claude/.tldr-verbose-turn" 2>/dev/null || true
     cat <<'EOF'
 [tldr: VERBOSE for this turn only — the TLDR response-shaping ruleset is suspended for this one response. Give the long form: full reasoning, complete detail, as much structure as the answer needs. TLDR mode resumes automatically on the next turn.]
 EOF
