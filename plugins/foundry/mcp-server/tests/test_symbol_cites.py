@@ -825,3 +825,13 @@ def test_a_citation_far_from_the_id_is_still_missing(tree: Path) -> None:
         casting_commit=casting_commit,
     )
     assert result["missing_citations"] == ["AC-005"], result
+
+
+def test_a_jinja_template_cite_parses() -> None:
+    """Ansible roles keep their values in ``.j2`` templates, so a casting
+    that owns one cites it like any other file. Before ``j2`` was admitted the
+    path stopped short of its suffix and the cite never parsed."""
+    cite = "roles/helm_values/templates/harbor.yaml.j2#serviceMonitor"
+    cites = iter_symbol_cites(cite)
+    assert [c["symbol"] for c in cites] == ["serviceMonitor"]
+    assert cites[0]["cite"] == cite
