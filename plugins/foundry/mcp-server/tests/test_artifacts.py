@@ -1863,3 +1863,40 @@ def test_the_published_digest_spelling_has_one_home(run_env):
     assert _hash_file(doc).startswith("sha256:")
     assert len(_hash_file(doc)) == len("sha256:") + 16
     assert _hash_file(fdir / "absent.json") is None
+
+
+def test_touched_files_an_inspect_records_are_not_declared_inputs(run_env):
+    """An INSPECT's ``touched_files`` name repo files the GRIND changed, not
+    inputs the run reads. A product file that is a JSON list must not make
+    every door refuse.
+
+    The control: ``spec_path`` is still a declared input, so a corrupt spec is
+    still named.
+    """
+    project_root, fdir = run_env
+    evidence = Path(project_root) / "docs" / "evidence" / "pg_stat_statements.json"
+    evidence.parent.mkdir(parents=True)
+    evidence.write_text("[]", encoding="utf-8")
+    spec = Path(project_root) / "forge-specs" / "probe" / "spec.md"
+    spec.parent.mkdir(parents=True)
+    spec.write_bytes(b"\xff\xfe not utf-8")
+    touched = ["docs/evidence/pg_stat_statements.json"]
+    (fdir / "state.json").write_text(
+        json.dumps(
+            {
+                "spec_path": "forge-specs/probe/spec.md",
+                "inspect_modes": [
+                    {
+                        "touched_files": touched,
+                        "trace_skip": {"details": {"touched_files": touched}},
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    problems = _run_artifact_problems(fdir)
+
+    assert not any("pg_stat_statements.json" in p for p in problems), problems
+    assert any("spec.md" in p for p in problems), problems
