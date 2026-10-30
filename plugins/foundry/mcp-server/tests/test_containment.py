@@ -383,11 +383,19 @@ def test_the_roster_walk_actually_sees_the_files_it_judges() -> None:
 #: evidence command, which lives in `tools/worktree_helpers.py` and in none
 #: of the eleven. This ruling is the maintainer's to confirm on the PR, not
 #: one a lead-stalls spec amendment made first.
-SOURCE_FILE_CAP = 12
+#:
+#: SIXTH RULING, 2026-10-29, the 4.11.3 patch: twelve to THIRTEEN. Two faults a
+#: live run hit. A casting that owned an Ansible `.j2` template could not cite
+#: it, because the citation path grammar stopped short of the suffix; the
+#: grammar lives in `tools/citation.py`, in none of the twelve. The second
+#: fix, `touched_files` no longer read as declared inputs, is in
+#: `artifacts.py`, already on the roster. Like the fifth, this ruling is the
+#: maintainer's to confirm on the PR.
+SOURCE_FILE_CAP = 13
 
 #: The source files this release is sanctioned to touch, repo-relative and
 #: POSIX-spelled. Four were anticipated when lead-stalls NFR-001 was written;
-#: eight were compelled afterwards and are the reason the cap moved, five times.
+#: nine were compelled afterwards and are the reason the cap moved, six times.
 #: Each entry says which it is, because a roster nobody can audit is just a
 #: longer number -- and since D-071 the number comes from the measured change,
 #: so what this set contributes is exactly the part a diff cannot: WHY.
@@ -437,10 +445,13 @@ SANCTIONED_SOURCE_FILES = frozenset(
         # is the only launch of an evidence command, and its child must get
         # /dev/null as stdin rather than the server's stdio transport.
         "plugins/foundry/mcp-server/src/foundry_mcp/tools/worktree_helpers.py",
+        # Compelled in the 4.11.3 patch: `_PATH`, the citation path grammar,
+        # did not admit `.j2`, so a cite of an Ansible template never parsed.
+        "plugins/foundry/mcp-server/src/foundry_mcp/tools/citation.py",
     }
-)  # 12 items
+)  # 13 items
 
-#: The four sanctioned files that carry no `lead-stalls `-qualified citation,
+#: The five sanctioned files that carry no `lead-stalls `-qualified citation,
 #: so the citation walk cannot see them. `directives.py` and `foundry_spawn.py`
 #: cite their work by the bare run-local defect id, which the convention in
 #: `tests/test_spec_id_convention.py` permits and which is not scoped to this
@@ -461,8 +472,10 @@ UNCITED_SANCTIONED_FILES = frozenset(
         "plugins/foundry/scripts/serena-daemon.sh",
         # The 4.11.2 patch cites its issue, guild#20, not a lead-stalls id.
         "plugins/foundry/mcp-server/src/foundry_mcp/tools/worktree_helpers.py",
+        # The 4.11.3 patch cites no lead-stalls id either.
+        "plugins/foundry/mcp-server/src/foundry_mcp/tools/citation.py",
     }
-)  # 4 items
+)  # 5 items
 
 #: What counts as source at all. Anything else in the change -- a manifest, a
 #: lockfile, a README, an evidence log -- is outside the cap because the cap is

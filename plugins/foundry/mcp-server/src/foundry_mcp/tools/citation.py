@@ -139,7 +139,7 @@ _PATH_MAX = 240
 _PATH = (
     r"[\w./\-]{1,%d}\."
     r"(?:py|ts|tsx|js|jsx|go|rs|java|rb|cpp|c|h|hpp|kt|swift|sql|yaml|yml"
-    r"|json|md|sh|toml|html|css|scss|vue|svelte|tf|hcl)"
+    r"|json|md|sh|toml|html|css|scss|vue|svelte|tf|hcl|j2)"
 ) % _PATH_MAX
 # An UNVALIDATED hint. Present in the grammar so a cite carrying one still
 # parses; never compared against anything (AC-007).

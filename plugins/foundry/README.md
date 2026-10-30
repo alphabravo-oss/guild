@@ -4,8 +4,8 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/foundry-4.11.2-F57C00?style=flat-square" alt="foundry 4.11.2"/>
-  <img src="https://img.shields.io/badge/foundry--mcp-1.10.2-F57C00?style=flat-square" alt="foundry-mcp 1.10.2"/>
+  <img src="https://img.shields.io/badge/foundry-4.11.3-F57C00?style=flat-square" alt="foundry 4.11.3"/>
+  <img src="https://img.shields.io/badge/foundry--mcp-1.10.3-F57C00?style=flat-square" alt="foundry-mcp 1.10.3"/>
   <img src="https://img.shields.io/badge/guild-pipeline-1E88E5?style=flat-square" alt="guild pipeline"/>
   <img src="https://img.shields.io/badge/Claude%20Code-plugin-8E44AD?style=flat-square" alt="Claude Code plugin"/>
   <img src="https://img.shields.io/badge/license-MIT-2E7D32?style=flat-square" alt="MIT license"/>
@@ -300,6 +300,16 @@ A blocked model does not fail the spawn. Claude Code checks the value against yo
 ---
 
 ## What's new
+
+### foundry 4.11.3 — Ansible templates can be cited, and a GRIND's touched files no longer lock every door
+
+Two fixes from a live run against a monorepo.
+
+| Adds | Where |
+|---|---|
+| **`.j2` paths parse as cites** — a casting that owns an Ansible template cites it like any other file; before, the path grammar stopped short of the suffix and the cite was refused as unresolvable | `citation.py` · `_PATH` |
+| **`touched_files` are not declared inputs** — an INSPECT records the repo files a GRIND changed, and the guard read them as run artifacts, so a product file that is a JSON list (a committed `pg_stat_statements.json` capture) made every door refuse with "is not a JSON object" | `artifacts.py` · `_string_leaves` |
+| **A regression test for each** that fails without its fix | `tests/test_symbol_cites.py`, `tests/test_artifacts.py` |
 
 ### foundry 4.11.2 — a long evidence sweep no longer disconnects the server
 

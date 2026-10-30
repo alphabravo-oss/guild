@@ -126,7 +126,7 @@
 </table>
 
 
-<sub><img src="https://img.shields.io/badge/forge-4.4.1-1E88E5?style=flat-square" alt="forge 4.4.1"/> <img src="https://img.shields.io/badge/foundry-4.11.2-F57C00?style=flat-square" alt="foundry 4.11.2"/> <img src="https://img.shields.io/badge/foundry--mcp-1.10.2-F57C00?style=flat-square" alt="foundry-mcp 1.10.2"/> <img src="https://img.shields.io/badge/crucible-0.1.0-F57C00?style=flat-square" alt="crucible 0.1.0"/> <img src="https://img.shields.io/badge/crew-0.2.0-6D4C41?style=flat-square" alt="crew 0.2.0"/> <img src="https://img.shields.io/badge/adhoc-0.3.0-43A047?style=flat-square" alt="adhoc 0.3.0"/> <img src="https://img.shields.io/badge/tldr-0.1.0-43A047?style=flat-square" alt="tldr 0.1.0"/> <img src="https://img.shields.io/badge/holmes-0.1.0-00897B?style=flat-square" alt="holmes 0.1.0"/> <img src="https://img.shields.io/badge/ux--review-0.1.0-00897B?style=flat-square" alt="ux-review 0.1.0"/> <img src="https://img.shields.io/badge/damu-0.2.0-00897B?style=flat-square" alt="damu 0.2.0"/> <img src="https://img.shields.io/badge/tidy-0.1.0-6D4C41?style=flat-square" alt="tidy 0.1.0"/> <img src="https://img.shields.io/badge/e2e-0.1.0-6D4C41?style=flat-square" alt="e2e 0.1.0"/> <img src="https://img.shields.io/badge/weave-0.1.0-6D4C41?style=flat-square" alt="weave 0.1.0"/> <img src="https://img.shields.io/badge/webster-0.11.0-6D4C41?style=flat-square" alt="webster 0.11.0"/></sub>
+<sub><img src="https://img.shields.io/badge/forge-4.4.1-1E88E5?style=flat-square" alt="forge 4.4.1"/> <img src="https://img.shields.io/badge/foundry-4.11.3-F57C00?style=flat-square" alt="foundry 4.11.3"/> <img src="https://img.shields.io/badge/foundry--mcp-1.10.3-F57C00?style=flat-square" alt="foundry-mcp 1.10.3"/> <img src="https://img.shields.io/badge/crucible-0.1.0-F57C00?style=flat-square" alt="crucible 0.1.0"/> <img src="https://img.shields.io/badge/crew-0.2.0-6D4C41?style=flat-square" alt="crew 0.2.0"/> <img src="https://img.shields.io/badge/adhoc-0.3.0-43A047?style=flat-square" alt="adhoc 0.3.0"/> <img src="https://img.shields.io/badge/tldr-0.1.0-43A047?style=flat-square" alt="tldr 0.1.0"/> <img src="https://img.shields.io/badge/holmes-0.1.0-00897B?style=flat-square" alt="holmes 0.1.0"/> <img src="https://img.shields.io/badge/ux--review-0.1.0-00897B?style=flat-square" alt="ux-review 0.1.0"/> <img src="https://img.shields.io/badge/damu-0.2.0-00897B?style=flat-square" alt="damu 0.2.0"/> <img src="https://img.shields.io/badge/tidy-0.1.0-6D4C41?style=flat-square" alt="tidy 0.1.0"/> <img src="https://img.shields.io/badge/e2e-0.1.0-6D4C41?style=flat-square" alt="e2e 0.1.0"/> <img src="https://img.shields.io/badge/weave-0.1.0-6D4C41?style=flat-square" alt="weave 0.1.0"/> <img src="https://img.shields.io/badge/webster-0.11.0-6D4C41?style=flat-square" alt="webster 0.11.0"/></sub>
 
 
 </div>
@@ -365,6 +365,16 @@ flowchart LR
 <summary><b>🆕 What's new</b></summary>
 
 <br/>
+
+### foundry 4.11.3 — Ansible templates can be cited, and a GRIND's touched files no longer lock every door
+
+Two fixes from a live run against a monorepo.
+
+| Adds | Where |
+|---|---|
+| **`.j2` paths parse as cites** — a casting that owns an Ansible template cites it like any other file; before, the path grammar stopped short of the suffix and the cite was refused as unresolvable | `citation.py` · `_PATH` |
+| **`touched_files` are not declared inputs** — an INSPECT records the repo files a GRIND changed, and the guard read them as run artifacts, so a product file that is a JSON list (a committed `pg_stat_statements.json` capture) made every door refuse with "is not a JSON object" | `artifacts.py` · `_string_leaves` |
+| **A regression test for each** that fails without its fix | `tests/test_symbol_cites.py`, `tests/test_artifacts.py` |
 
 ### foundry 4.11.2 — a long evidence sweep no longer disconnects the server
 

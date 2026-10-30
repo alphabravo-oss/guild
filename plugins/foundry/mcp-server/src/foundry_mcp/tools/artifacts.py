@@ -823,12 +823,27 @@ def _unless_it_vanished(path: Path, problem: str | None) -> str | None:
 # The fix is not "also check directives.md" — naming that file here is the
 # escalated class, and the next non-JSON artifact would repeat it. The glob
 # derives the members; the decoder table says how to read each type.
+#: Keys whose string leaves name files the run INSPECTS, never inputs it reads.
+#:
+#: An INSPECT entry in state.json records ``touched_files`` (and repeats them
+#: under ``trace_skip.details``): the repo files a GRIND changed. Any of them
+#: may be a JSON list, binary, or anything else a product commits, so admitting
+#: them as declared external inputs (D-145) held a product's evidence to the
+#: run-artifact contract. Driven on a real run: six committed
+#: ``pg_stat_statements.json`` captures, each a JSON list by design, made every
+#: door refuse with "is not a JSON object" the moment ``inspect_start`` wrote
+#: the list.
+_NON_INPUT_KEYS = frozenset({"touched_files"})
+
+
 def _string_leaves(value: object) -> Iterator[str]:
     """Every string anywhere in a parsed JSON document, at any depth."""
     if isinstance(value, str):
         yield value
     elif isinstance(value, dict):
-        for item in value.values():
+        for key, item in value.items():
+            if key in _NON_INPUT_KEYS:
+                continue
             yield from _string_leaves(item)
     elif isinstance(value, list):
         for item in value:
