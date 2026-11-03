@@ -30,7 +30,7 @@
       "name": "trowel",
       "source": "./plugins/trowel",
       "description": "Lean spec-to-code build workflow: code-driven preflight and planning, builders that reuse what the project already has, each slice spec-checked as it lands, the project's real end-to-end check run in code, and at most two batched fix rounds. A separate plugin; forge and foundry are unchanged.",
-      "version": "0.2.0",
+      "version": "0.2.1",
       "category": "development",
       "author": {
         "name": "AlphaBravo"
