@@ -252,7 +252,9 @@ def describe(root: Path, cmd: str, cwd: str = "", why: str = "", text: str = "",
     dry = "mage -l" if runner == "mage" else None
     if exists:
         if runner == "make" and len(words) > 1:
-            dry = f"make -n {words[1]}"
+            # Keep every argument: `make -C dir target` dry-runs as `make -n -C dir target`.
+            # Keeping only the second word turned it into `make -n -C`, which prints make's usage.
+            dry = f"make -n {' '.join(words[1:])}"
         elif runner == "go" and len(words) > 1 and words[1] == "test":
             tags = next((w for w in words if w.startswith("-tags")), "")
             tagval = words[words.index(tags) + 1] if tags == "-tags" and words.index(tags) + 1 < len(words) else ""

@@ -64,6 +64,17 @@ def test_spec_command_that_matches_a_makefile_target(tmp_path):
     assert r["dry_run"] == "make -n e2e" and r["exists"]
 
 
+def test_make_with_a_directory_keeps_its_arguments_in_the_dry_run(tmp_path):
+    # A monorepo gate named as `make -C <dir> <target>`: the dry run must carry the
+    # directory and the target, not stop at `-C`, which only prints make's usage.
+    (tmp_path / "iac" / "platform").mkdir(parents=True)
+    (tmp_path / "iac" / "platform" / "Makefile").write_text("validate:\n\ttofu validate\n")
+    r = detect.integration(tmp_path, "- **Verification:** `make -C iac/platform validate`; the end-to-end gate.\n")["found"]
+    assert r["command"] == "make -C iac/platform validate" and r["exists"]
+    assert r["dry_run"] == "make -n -C iac/platform validate"
+    assert detect.describe(tmp_path, "make -C iac/platform validate")["dry_run"] == "make -n -C iac/platform validate"
+
+
 def test_mage_target_the_build_will_write_inherits_docker_from_its_siblings(tmp_path):
     (tmp_path / "magefile.go").write_text("//go:build mage\npackage main\n\nfunc Smoke() error {\n\treturn sh.Run(\"docker\", \"run\")\n}\n")
     r = detect.integration(tmp_path, "- AC-7: an integration suite, run with `mage metrics`, boots a cluster.\n")["found"]
