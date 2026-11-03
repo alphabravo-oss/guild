@@ -27,6 +27,16 @@
       }
     },
     {
+      "name": "trowel",
+      "source": "./plugins/trowel",
+      "description": "Lean spec-to-code build workflow: code-driven preflight and planning, builders that reuse what the project already has, each slice spec-checked as it lands, the project's real end-to-end check run in code, and at most two batched fix rounds. A separate plugin; forge and foundry are unchanged.",
+      "version": "0.2.0",
+      "category": "development",
+      "author": {
+        "name": "AlphaBravo"
+      }
+    },
+    {
       "name": "adhoc",
       "source": "./plugins/adhoc",
       "description": "Stops Claude from racing on ad-hoc work. Methodical-mode pre-response checklist injected every turn (Restate, Verified/Unverified assumptions, Read Floor, Approach Deliberation, Blast Radius, Stall Check, Competing Hypotheses, Goal-Driven Execution). Stop hook enforces four gates: file:line citation verifier, uncertainty-tell scanner, zero-tool-call grounding audit, and an iterative two-tier critic-dialog (Haiku fast-critic rounds 1-2, opus pre-stop-critic rounds 3-5, HARD block at round 5 until /adhoc:trust-me bypass). Each critic runs a 10-item rule compliance audit and sees the prior round's feedback to verify Claude actually addressed flagged issues. /adhoc:casual (one turn skip), /adhoc:trust-me (one-turn strict bypass), /adhoc:off (session disable). /adhoc:deep for heavier analysis, /adhoc:second-opinion for independent critique.",

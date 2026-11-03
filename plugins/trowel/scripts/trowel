@@ -1,0 +1,3 @@
+#!/bin/bash
+# trowel's code steps. Usage: trowel [--root DIR] [--job KEY] [--calls JSON] <command> [args]; see trowel.py.
+exec python3 "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/trowel.py" "$@"
