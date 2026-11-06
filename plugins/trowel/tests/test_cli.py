@@ -11,7 +11,7 @@ from common import load_state, write_json
 def test_args_names_the_run_and_checks_flags(repo):
     r = j(repo, "args", "spec.md", "--max-rounds", "1")
     assert r["ok"] and r["args"]["run"].startswith("proj-") and r["args"]["max_rounds"] == 1
-    assert r["args"]["max_agents"] == 40 and r["args"]["plugin_root"] == str(PLUGIN)
+    assert r["args"]["max_agents"] == 60 and r["args"]["plugin_root"] == str(PLUGIN)
     assert j(repo, "args", "--resume", "r9")["args"]["run"] == "r9"
     assert "--max-rounds must be 0 or more" in j(repo, "args", "spec.md", "--max-rounds", "-1")["stop"]
     assert "--max-agents must be at least 4" in j(repo, "args", "spec.md", "--max-agents", "3")["stop"]

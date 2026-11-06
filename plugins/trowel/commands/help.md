@@ -34,7 +34,7 @@ agents and no MCP server.
 ## Flags
 
 - `--max-rounds N`: fix rounds before what remains goes to the report (default 2; 0 reports without fixing).
-- `--max-agents N`: a hard cap on agent calls for the run (default 40); the report still runs when it is reached.
+- `--max-agents N`: a hard cap on agent calls for the run (default 60); the report still runs when it is reached.
 - `--resume RUN`: continue a stopped run from its last completed step (on its `trowel/<run>` branch).
 
 The reasons for each step are in the plugin's README.

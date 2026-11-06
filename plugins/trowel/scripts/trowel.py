@@ -249,7 +249,7 @@ def cmd_resume(root: Path, a, rdir: Path) -> dict:
     built = sorted({actor for actor in (state.get("commits") or {}) if not actor.startswith("fix:")})
     return {"ok": True, "stop": "", "run": a.run, "run_dir": str(rdir), "base_commit": state.get("base_commit"),
             "branch": state.get("branch"), "steps_done": done, "epoch": epoch, "max_rounds": state.get("max_rounds", 2),
-            "max_agents": state.get("max_agents", 40), "commands": state.get("commands", {}),
+            "max_agents": state.get("max_agents", 60), "commands": state.get("commands", {}),
             "integration": state.get("integration"), "measure": state.get("measure"),
             "finder": "preflight" not in done and bool(state.get("integration_asked")) and not state.get("integration"),
             "plan": _plan_summary(state, rdir), "built": built, "rounds": rounds,
@@ -296,13 +296,13 @@ def _parser() -> argparse.ArgumentParser:
     s = sub.add_parser("args")
     s.add_argument("spec", nargs="?", default="")
     s.add_argument("--max-rounds", type=int, default=2)
-    s.add_argument("--max-agents", type=int, default=40)
+    s.add_argument("--max-agents", type=int, default=60)
     s.add_argument("--resume", default="")
     s = sub.add_parser("init")
     s.add_argument("--spec", required=True)
     s.add_argument("--run", required=True)
     s.add_argument("--max-rounds", type=int, default=2)
-    s.add_argument("--max-agents", type=int, default=40)
+    s.add_argument("--max-agents", type=int, default=60)
     s.add_argument("--no-branch", action="store_true")
     s = sub.add_parser("index")
     s.add_argument("--spec", required=True)

@@ -33,10 +33,10 @@ def test_report_verdicts_from_spec_checks_and_rechecks(run):
     status = {r["id"]: r["status"] for r in d["requirements"]}
     assert status == {"GI-001": "MET", "FR-001": "NOT MET", "FR-002": "MET"}
     assert d["counts"] == {"MET": 2, "NOT MET": 1, "NOT CHECKED": 0}
-    assert d["agents"]["total"] == 9 and d["agents"]["by"]["clerk"] == 5 and d["agents"]["cap"] == 40
+    assert d["agents"]["total"] == 9 and d["agents"]["by"]["clerk"] == 5 and d["agents"]["cap"] == 60
     md = (rdir / "report.md").read_text()
     assert "**2 met, 1 not met, 0 not checked** of 3 requirements." in md
-    assert "Agent calls: 9 of a cap of 40 (builder 1, clerk 5)." in md
+    assert "Agent calls: 9 of a cap of 60 (builder 1, clerk 5)." in md
     assert "- **G-002** (FR-001) at `calc.py:2`: add untested" in md and "Fixer: disputed: add is tested" in md
     assert "from the workflow" in md and "| verify:2 |" in md
     assert "report" in load_state(rdir)["steps_done"]

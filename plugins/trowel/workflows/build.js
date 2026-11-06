@@ -18,7 +18,7 @@ const A = args || {}
 const PLUGIN = A.plugin_root, ROOT = A.project_root, RUN = A.run, RESUME = !!A.resume
 if (!PLUGIN || !ROOT || !RUN) return { status: 'error', message: 'trowel-build needs args.plugin_root, args.project_root and args.run; launch it with /trowel:build' }
 let MAX_ROUNDS = Number.isInteger(A.max_rounds) && A.max_rounds >= 0 ? A.max_rounds : 2
-let CAP = Number.isInteger(A.max_agents) && A.max_agents >= 4 ? A.max_agents : 40
+let CAP = Number.isInteger(A.max_agents) && A.max_agents >= 4 ? A.max_agents : 60
 const q = s => `'${String(s).replace(/'/g, `'\\''`)}'`
 const T = `${q(`${PLUGIN}/scripts/trowel`)} --root ${q(ROOT)}`, RR = `--run ${q(RUN)}`
 
@@ -26,6 +26,8 @@ let RDIR = '', EPOCH = 0, BASE = '', COMMANDS = {}, INTEG = null, PLAN = null, S
 const concerns = [], timeline = [], calls = { total: 0, by: {} }
 const note = m => { timeline.push(m); log(m) }, concern = m => { concerns.push(m); note(`concern: ${m}`) }
 class Stop { constructor(status, message) { this.status = status; this.message = message } }
+// What crosses parallel()'s boundary is cloned and loses its class; all() carries a Stop as data and this rebuilds it.
+const asStop = e => e instanceof Stop ? e : e && e.stop ? new Stop(e.status, e.message) : null
 const result = (status, message, extra) => ({ status, message, run: RUN, run_dir: RDIR, agent_calls: calls, concerns, timeline, ...(extra || {}) })
 
 // Every agent call is counted here and refused past the cap; the last call is kept for the report.
@@ -36,13 +38,14 @@ const call = async (kind, prompt, opts, last) => {
 }
 // A builder, checker or fixer that dies does not end the run; the next code check sees what it left.
 const soft = async (kind, prompt, opts) => {
-  try { return await call(kind, prompt, opts) } catch (e) { if (e instanceof Stop) throw e; concern(`${opts.label} failed: ${e && e.message ? e.message : e}`); return null }
+  try { return await call(kind, prompt, opts) } catch (e) { if (asStop(e)) throw asStop(e); concern(`${opts.label} failed: ${e && e.message ? e.message : e}`); return null }
 }
-// parallel() turns a throw into null; all() rethrows the first Stop after the barrier.
+// parallel() turns a throw into null; all() rethrows the first Stop after the barrier. A Stop is passed
+// through the barrier as {stop, status, message}, because a class instance does not survive the clone.
 const all = async thunks => {
-  const out = await parallel(thunks.map(fn => async () => { try { return { v: await fn() } } catch (e) { return { e } } }))
+  const out = await parallel(thunks.map(fn => async () => { try { return { v: await fn() } } catch (e) { const s = asStop(e); return { e: s ? { stop: true, status: s.status, message: s.message } : { message: e && e.message ? e.message : String(e) } } } }))
   const bad = out.find(x => !x || x.e)
-  if (bad) throw (bad && bad.e) || new Stop('error', 'a parallel branch returned nothing')
+  if (bad) throw asStop(bad && bad.e) || (bad && bad.e ? new Error(bad.e.message) : new Stop('error', 'a parallel branch returned nothing'))
   return out.map(x => x.v)
 }
 
@@ -201,7 +204,8 @@ Write ${RDIR}/fixes/r${R}-${sid}.json.`, { label: `fix:${sid}:r${R}`, phase: 'Fi
   }
   return await finish()
 } catch (e) {
-  if (e instanceof Stop && e.status === 'capped' && RDIR) { concern(e.message); return await finish('capped') }
-  if (e instanceof Stop) return result(e.status, e.message)
+  const s = asStop(e)
+  if (s && s.status === 'capped' && RDIR) { concern(s.message); return await finish('capped') }
+  if (s) return result(s.status, s.message)
   throw e
 }
