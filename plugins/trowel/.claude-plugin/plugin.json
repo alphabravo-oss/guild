@@ -1,6 +1,6 @@
 {
   "name": "trowel",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "description": "A lean spec-to-code build workflow. One Workflow script: preflight in code, a planner only when the spec is too big for one builder, builders that reuse what the project already has, each slice spec-checked as it lands, one code check that runs the project's real end-to-end suite, and at most two batched fix rounds. Three agents, a counted and capped number of agent calls, no MCP server.",
   "author": {
     "name": "AlphaBravo"

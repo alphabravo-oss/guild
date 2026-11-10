@@ -72,7 +72,7 @@ def test_single_builder_run_makes_five_agent_calls(single):
     assert single["labels"] == ["clerk:init", "build:all", "clerk:verify:r1", "spec:r1", "clerk:report"]
     assert single["phases"] == ["Preflight", "Build", "Verify", "Report"]
     assert single["result"]["agent_calls"] == {"total": 5, "by": {"clerk": 3, "builder": 1, "spec-checker": 1}}
-    assert _cmds(single)[0] == "[init-e0] init --spec 'docs/spec.md' --run 'r' --max-rounds 2 --max-agents 40"
+    assert _cmds(single)[0] == "[init-e0] init --spec 'docs/spec.md' --run 'r' --max-rounds 2 --max-agents 60"
     assert _cmds(single)[1] == "[verify-r1-e0] verify --run 'r' --round 1"
 
 

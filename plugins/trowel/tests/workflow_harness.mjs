@@ -128,7 +128,7 @@ const trowel = ({ name, rest }) => {
         finder: !!sc.finder, blocked: sc.initBlocked || '', integration: sc.finder ? undefined : integ }
     case 'resume':
       return { ok: true, stop: '', run: 'r', run_dir: '/p/trowel-archive/r', base_commit: 'base0000000', epoch: 1, max_rounds: sc.maxRounds ?? 2,
-        max_agents: sc.maxAgents ?? 40, commands: {}, integration: integ, finder: false, plan, built: [], rounds: {}, ...sc.resume }
+        max_agents: sc.maxAgents ?? 60, commands: {}, integration: integ, finder: false, plan, built: [], rounds: {}, ...sc.resume }
     case 'preflight':
       return { ok: true, blocked: '', integration: { command: 'make test', cwd: '' }, ran: [], warnings: [] }
     case 'verify': {
@@ -171,7 +171,9 @@ const agent = async (prompt, opts = {}) => {
   if (label.startsWith('fix:')) return { file: 'f.json', fixed: [], disputed: [], blocked: [] }
   return { output: '{}' }
 }
-const parallel = async thunks => Promise.all(thunks.map(t => t().catch(() => null)))
+// As the Workflow runtime does, a branch's return value is cloned on its way back, so a class instance
+// (a thrown Stop carried in the result) loses its prototype; the script must not rely on instanceof there.
+const parallel = async thunks => Promise.all(thunks.map(t => t().then(v => structuredClone(v)).catch(() => null)))
 const pipeline = async () => { throw new Error('pipeline is not used by this script') }
 const phase = t => phases.push(t)
 const log = () => {}

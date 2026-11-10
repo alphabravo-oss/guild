@@ -19,7 +19,7 @@ hand-written one.
 | Flag | Default | Meaning |
 |---|---|---|
 | `--max-rounds N` | 2 | Fix rounds before what remains goes to the report. 0 reports without fixing. |
-| `--max-agents N` | 40 | Hard cap on agent calls. The last call is kept for the report, so a capped run still reports. |
+| `--max-agents N` | 60 | Hard cap on agent calls. The last call is kept for the report, so a capped run still reports. |
 | `--resume RUN` | none | Continue a run from its last completed step, on its `trowel/<run>` branch. |
 
 You need a git repository with a clean working tree, `python3`, and the project's own toolchain. trowel works on a new
