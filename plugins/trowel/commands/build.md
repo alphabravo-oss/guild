@@ -11,8 +11,8 @@ disable-model-invocation: "true"
 "${CLAUDE_PLUGIN_ROOT}/scripts/trowel" --root "${CLAUDE_PROJECT_DIR:-$PWD}" args $ARGUMENTS
 ```
 
-You launch trowel's build as the `trowel-build` workflow (`${CLAUDE_PLUGIN_ROOT}/workflows/build.js`) and report what
-it returns. The script holds the whole flow; you do not build, verify or run trowel commands yourself.
+You launch trowel's build as the `trowel:trowel-build` workflow (`${CLAUDE_PLUGIN_ROOT}/workflows/build.js`) and report
+what it returns. The script holds the whole flow; you do not build, verify or run trowel commands yourself.
 
 ## 1. Read the parsed arguments
 
@@ -22,8 +22,12 @@ The command above printed one JSON line. If `ok` is false, show `stop` and end h
 
 Call the **Workflow** tool with:
 
-- `scriptPath`: `<args.plugin_root>/workflows/build.js`
+- `name`: `trowel:trowel-build`
 - `args`: the `args` object from that line, passed as a JSON object, not a string.
+
+Launch by `name`, never by `scriptPath`: the Workflow tool refuses a script path outside the working directory, and the
+installed plugin lives in the plugin cache. The name is the plugin namespace plus the script's `meta.name`; a bare
+`trowel-build` does not resolve.
 
 Then say one line and wait; do not poll:
 
